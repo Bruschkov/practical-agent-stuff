@@ -16,9 +16,15 @@
 - It verifies initialization/config lookup; task and draft create, read, update, archive; task parent/dependency data; task comments/assignees; and repeatable JSON for `task list` and `task view`.
 - Backlog.md provides `--json` for task reads; draft reads use `--plain`.
 
+## Workflow configuration
+- The required types, statuses, priorities, refinement approval boundary, HITL handling, and Definition of Done are defined by [Adopt a Backlog.md workflow contract](decisions/2026-09-03-adopt-backlog-workflow-contract.md).
+- `backlog config set` cannot write list-valued `statuses`, `types`, or `priorities`; `/workflow-init` must reconcile those values in the project config YAML after confirmation, then validate them through `backlog config get`.
+- Backlog.md supports `definition_of_done` in project config and exposes it as `definitionOfDone` in task JSON. It has no configurable default priority, so workflow ticket creation must pass `Medium` explicitly when none is selected.
+
 ## Verification
 - `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs`
 
 ## Related
 - [Decision: Use package-local Backlog.md CLI](decisions/2026-09-03-use-package-local-backlog-cli.md)
+- [Decision: Adopt a Backlog.md workflow contract](decisions/2026-09-03-adopt-backlog-workflow-contract.md)
 - [`pi-extensions/backlog-workflow/package.json`](../../pi-extensions/backlog-workflow/package.json)
