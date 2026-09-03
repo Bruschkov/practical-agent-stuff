@@ -35,7 +35,7 @@ Non-goals: supporting Backlog.md 2.x, managing a system-wide Backlog.md installa
 
 - [x] Package manifest declares `backlog.md` `^1.4.0` and `index.ts` as its Pi extension.
 - [x] `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs` passes.
-- [ ] Before adding workflow operations, verify the package-local CLI's supported commands and stable `--json` output in a temporary Git repository.
+- [x] The contract test invokes the package-local CLI in a temporary Git repository and verifies config lookup, task/draft CRUD, parent/dependency data, comments, assignments, and repeatable task JSON.
 
 ## Alternatives Considered
 
@@ -44,5 +44,7 @@ Non-goals: supporting Backlog.md 2.x, managing a system-wide Backlog.md installa
 - Exact dependency version: rejected because compatible Backlog.md 1.x releases are acceptable.
 
 ## More Information
+
+2026-09-03: Backlog.md exposes versioned JSON for `task list` and `task view`; draft reads use plain text. The contract covers the supported JSON boundary rather than parsing human-readable output.
 
 See [Backlog Workflow Package](../backlog-workflow.md).

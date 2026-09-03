@@ -12,12 +12,9 @@ Versioned coding-agent assets used selectively across projects.
 - Build: none configured; Pi/OpenCode load extension/plugin source directly.
 
 ## Repo Rules
-- `skills/` = versioned source skills for distribution; keep them when local installations change.
-- Skills are installed globally; do not track local `.agents/skills/` copies.
-- `prompts/` = tracked Pi prompt templates.
-- `pi-extensions/` = Pi extension source plus examples.
-- `opencode-plugins/` = OpenCode plugin source plus docs.
+- Keep versioned source skills; do not track local `.agents/skills/` copies.
 
 ## Docs
 - Docs map: [`.agents/docs/README.md`](.agents/docs/README.md)
+- Backlog workflow: [`.agents/docs/backlog-workflow.md`](.agents/docs/backlog-workflow.md)
 - ADRs: [`.agents/docs/decisions/README.md`](.agents/docs/decisions/README.md) (ADR tools: use `.agents/docs/decisions/` as dir)

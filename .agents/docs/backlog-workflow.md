@@ -10,6 +10,12 @@
 - Pi npm/git package installs install runtime dependencies. For source-local development, run `npm install` in `pi-extensions/backlog-workflow/` before loading it.
 - Future workflow code must consume the Backlog.md CLI's JSON interface, not its internal TypeScript API.
 
+## CLI contract
+- Source-local test setup: `npm install` in `pi-extensions/backlog-workflow/`.
+- The contract test runs that local binary in a temporary Git repository.
+- It verifies initialization/config lookup; task and draft create, read, update, archive; task parent/dependency data; task comments/assignees; and repeatable JSON for `task list` and `task view`.
+- Backlog.md provides `--json` for task reads; draft reads use `--plain`.
+
 ## Verification
 - `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs`
 
