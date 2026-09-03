@@ -7,7 +7,7 @@ ADRs for durable repo decisions.
 - Looking for accepted constraints before changing repo structure.
 
 ## Index
-- No ADRs yet.
+- [2026-09-03 — Use a package-local Backlog.md CLI](2026-09-03-use-package-local-backlog-cli.md) — accepted.
 
 ## Rules / workflow
 - Store ADRs in this directory.

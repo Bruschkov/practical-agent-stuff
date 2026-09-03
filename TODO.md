@@ -2,9 +2,9 @@
 
 ## Phase 1 — Foundation
 
-- [ ] Create `pi-extensions/backlog-workflow/` as a locally installable Pi package, pin `backlog.md`, register a minimal extension, and add a contract-test entry point.
-- [ ] Verify the pinned Backlog.md CLI in a temporary Git repository: initialization, config discovery, task/draft CRUD, parent/dependency data, comments, assignments, and stable `--json` output.
-- [ ] Define the required Backlog.md statuses, task types, priorities, Definition of Done, and version range; record the accepted architecture and workflow contract in an ADR.
+- [x] Create `pi-extensions/backlog-workflow/` as a locally installable Pi package, add `backlog.md`, register a minimal extension, and add a contract-test entry point.
+- [ ] Verify the package-local Backlog.md CLI in a temporary Git repository: initialization, config discovery, task/draft CRUD, parent/dependency data, comments, assignments, and stable `--json` output.
+- [ ] Define the required Backlog.md statuses, task types, priorities, and Definition of Done; record the accepted workflow contract in an ADR.
 - [ ] Implement idempotent `/workflow-init`: require Git, initialize Backlog.md when absent, install or reconcile the required config with confirmation, and fail clearly on incompatibility.
 
 ## Phase 2 — Interactive refinement

@@ -11,6 +11,7 @@ Repo operating manual for future coding agents.
 - ADR index: [`decisions/README.md`](decisions/README.md)
 - Repo overview and install notes: [`../../README.md`](../../README.md)
 - Backlog handoff extension docs: [`../../pi-extensions/backlog-handoff/README.md`](../../pi-extensions/backlog-handoff/README.md)
+- Backlog workflow package: [`backlog-workflow.md`](backlog-workflow.md)
 - Backlog handoff example: [`../../pi-extensions/backlog-handoff/examples/generic-fullstack/README.md`](../../pi-extensions/backlog-handoff/examples/generic-fullstack/README.md)
 
 ## Rules / workflow
@@ -24,5 +25,5 @@ Repo operating manual for future coding agents.
 - Do not store secrets, scratch notes, generated dumps, or generic framework advice.
 
 ## Verification
-- Test extension contracts: `node --test tests/pi-extensions/backlog-handoff/contract.test.mjs`
+- Test extension contracts: `node --test tests/pi-extensions/*/contract.test.mjs` (handoff suite currently needs the Pi package-import migration)
 - Check links after doc changes: inspect all relative links in touched markdown.
