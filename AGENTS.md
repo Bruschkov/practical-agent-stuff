@@ -12,8 +12,8 @@ Versioned coding-agent assets used selectively across projects.
 - Build: none configured; Pi/OpenCode load extension/plugin source directly.
 
 ## Repo Rules
-- `skills/` = source skills for distribution.
-- `.agents/skills/` = tracked local skill copies; keep mirrored with matching `skills/` files.
+- `skills/` = versioned source skills for distribution; keep them when local installations change.
+- Skills are installed globally; do not track local `.agents/skills/` copies.
 - `prompts/` = tracked Pi prompt templates.
 - `pi-extensions/` = Pi extension source plus examples.
 - `opencode-plugins/` = OpenCode plugin source plus docs.

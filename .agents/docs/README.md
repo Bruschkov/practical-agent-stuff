@@ -15,6 +15,7 @@ Repo operating manual for future coding agents.
 
 ## Rules / workflow
 - Keep root `AGENTS.md` short; put durable task docs here.
+- `skills/` contains versioned distributable sources; global skill installation must not remove them or add local `.agents/skills/` mirrors.
 - Keep agent-facing docs under `.agents/docs/`, except root `AGENTS.md`.
 - Update this map when adding/removing docs.
 - ADRs live in `.agents/docs/decisions/`.
