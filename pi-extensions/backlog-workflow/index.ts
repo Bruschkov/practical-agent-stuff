@@ -578,7 +578,7 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 			const matches = featureCompletions.filter((item) => item.value.toLowerCase().startsWith(query) || item.label.toLowerCase().includes(query));
 			return matches.length ? matches : null;
 		},
-		handler: async (args, ctx) => {
+		handler: async function implementRun(args, ctx) {
 			let requestedId = args.trim();
 			const root = await projectRoot(pi, ctx.cwd);
 			if (!requestedId) {
@@ -596,7 +596,7 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				const requestedTask = JSON.parse(await runBacklog(pi, root, ["task", "view", requestedId, "--json"])).task as WorkflowTask;
 				if (requestedTask.type === "feature") {
 					taskId = await runnableFeatureTask(pi, root, requestedId) ?? "";
-					if (!taskId) throw new Error(`${requestedId} has no ready, unblocked descendant leaf task.`);
+					if (!taskId) return void ctx.ui.notify(`${requestedId}: no runnable descendant leaf tasks`, "info");
 				}
 				const task = taskId === requestedId ? requestedTask : JSON.parse(await runBacklog(pi, root, ["task", "view", taskId, "--json"])).task as WorkflowTask;
 				if (task.type !== "task" || !["Open", "Rework"].includes(task.status) || !task.isReady || task.readiness?.isBlocked || task.assignees?.includes("@human") || task.subtasks.length) throw new Error(`${taskId} is not a ready, unblocked leaf task.`);
@@ -614,31 +614,54 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 					if (result.outcome === "needs_human") {
 						const answered = await requestHuman(pi, root, task.id, evidence.blockers.join("\n") || evidence.summary, ctx);
 						ctx.ui.notify(`${task.id}: ${answered ? "human response recorded" : "Needs Human"}`, answered ? "success" : "warning");
+						return result.outcome;
 					}
-					return result.outcome === "completed";
+					return result.outcome;
 				};
 
-				if (!await implement()) return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
+				const initialOutcome = await implement();
+				if (initialOutcome !== "completed") {
+					if (requestedTask.type === "feature" && ["blocked", "needs_human"].includes(initialOutcome)) return implementRun(requestedId, ctx);
+					return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
+				}
 				while (true) {
 					const review = await runChildPi({ cwd: root, prompt: reviewerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel, readOnly: true });
-					if (review.failure || !review.outcome) return void ctx.ui.notify(`${task.id}: review failed: ${review.failure || "Worker did not return an outcome."}`, "error");
+					if (review.failure || !review.outcome) {
+						ctx.ui.notify(`${task.id}: review failed: ${review.failure || "Worker did not return an outcome."}`, "error");
+						if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
+						return;
+					}
 					if (review.outcome !== "completed") {
 						if (review.outcome === "needs_human") {
 							const answered = await requestHuman(pi, root, task.id, requestText(review.output), ctx);
-							return void ctx.ui.notify(`${task.id}: ${answered ? "human response recorded" : "Needs Human"}`, answered ? "success" : "warning");
+							ctx.ui.notify(`${task.id}: ${answered ? "human response recorded" : "Needs Human"}`, answered ? "success" : "warning");
+							if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
+							return;
 						}
-						return void ctx.ui.notify(`${task.id}: In Review (${review.outcome})`, "warning");
+						ctx.ui.notify(`${task.id}: In Review (${review.outcome})`, "warning");
+						if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
+						return;
 					}
 					const evidence = reviewEvidence(review.output);
 					await persistReview(pi, root, task, evidence);
-					if (evidence.verdict === "approved") return void ctx.ui.notify(`${task.id}: In Review`, "success");
+					if (evidence.verdict === "approved") {
+						ctx.ui.notify(`${task.id}: In Review`, "success");
+						if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
+						return;
+					}
 					if (attempt >= maxReworkAttempts) {
 						await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Needs Human", "--assignee", "@human", "--comment", `Rework cap reached after ${maxReworkAttempts} attempts. Review findings are recorded above.`, "--comment-author", "@workflow"]);
-						return void ctx.ui.notify(`${task.id}: Needs Human (rework cap reached)`, "warning");
+						ctx.ui.notify(`${task.id}: Needs Human (rework cap reached)`, "warning");
+						if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
+						return;
 					}
 					attempt += 1;
 					await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Rework", "--comment", `Rework attempt: ${attempt}/${maxReworkAttempts}.`, "--comment-author", "@workflow"]);
-					if (!await implement(true)) return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
+					const reworkOutcome = await implement(true);
+					if (reworkOutcome !== "completed") {
+						if (requestedTask.type === "feature" && ["blocked", "needs_human"].includes(reworkOutcome)) return implementRun(requestedId, ctx);
+						return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
+					}
 				}
 			} catch (error: any) {
 				if (started) {

@@ -113,3 +113,5 @@ Revisit this contract if Backlog.md cannot represent the required configuration 
 2026-09-04: An implementation or reviewer `needs_human` outcome persists its request and assigns `@human` before the controller prompts. A non-empty response is persisted as an `@human` comment, clears the assignment, and reopens the task; dismissal or unavailable UI leaves the task pending and resumable in `Needs Human`.
 
 2026-09-04: Feature-child selection orders runnable `Rework` before `Open`, then configured priority, Backlog ordinal, and task ID. `Rework` is the only persisted resume class; do not add an interrupted marker or resume stale `In Progress` work. Failed or cancelled work returned to `Open` follows ordinary priority ordering.
+
+2026-09-04: A selected feature repeats deterministic selection after each leaf reaches review, blocks, or pauses for deferred human input, instead of requiring one `/implement-run` invocation per task. A failed implementation remains `Open` and ends that invocation to avoid an unbounded automatic retry loop.

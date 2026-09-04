@@ -415,7 +415,7 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	assert.match(resumed.comments.at(-1).body, /Resume with staging/);
 });
 
-test("implement-run selects only a ready descendant leaf for a feature", async (t) => {
+test("implement-run processes every ready descendant leaf for a feature", async (t) => {
 	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
 	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-feature-"));
 	const fakePi = path.join(project, "fake-pi.mjs");
@@ -454,13 +454,7 @@ test("implement-run selects only a ready descendant leaf for a feature", async (
 	await command.handler("", commandContext(project).ctx);
 	assert.equal(JSON.parse(await cli(project, "task", "view", reworkId, "--json")).task.status, "Rework");
 	await command.handler("", commandContext(project, async () => true, async () => undefined, async (_label, options) => options.find((option) => option.startsWith(`${featureId}:`))).ctx);
-	assert.equal(JSON.parse(await cli(project, "task", "view", reworkId, "--json")).task.status, "In Review");
-	assert.equal(JSON.parse(await cli(project, "task", "view", priorityId, "--json")).task.status, "Open");
-	await command.handler(featureId, commandContext(project).ctx);
-	assert.equal(JSON.parse(await cli(project, "task", "view", priorityId, "--json")).task.status, "In Review");
-	assert.equal(JSON.parse(await cli(project, "task", "view", runnableId, "--json")).task.status, "Open");
-	await command.handler(featureId, commandContext(project).ctx);
-	for (const [id, status] of [[blockedId, "Blocked"], [waitingId, "Open"], [humanId, "Open"], [runnableId, "In Review"], [laterRunnableId, "Open"]]) {
+	for (const [id, status] of [[blockedId, "Blocked"], [waitingId, "Open"], [humanId, "Open"], [reworkId, "In Review"], [priorityId, "In Review"], [runnableId, "In Review"], [laterRunnableId, "In Review"]]) {
 		assert.equal(JSON.parse(await cli(project, "task", "view", id, "--json")).task.status, status);
 	}
 });
