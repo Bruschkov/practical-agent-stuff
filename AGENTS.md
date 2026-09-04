@@ -3,14 +3,14 @@ Versioned coding-agent assets used selectively across projects.
 
 ## Stack
 - Markdown for skills/prompts/docs.
-- TypeScript for Pi extensions and OpenCode plugins.
+- TypeScript for Pi extensions.
 - Node.js built-in test runner for contract tests; Pi extensions target `@earendil-works/pi-coding-agent`.
 
 ## Build & Test
 - Tests: `node --test tests/pi-extensions/*/contract.test.mjs`.
 - Backlog workflow: `npm ci --prefix pi-extensions/backlog-workflow && node --test tests/pi-extensions/backlog-workflow/contract.test.mjs`.
 - Lint: none configured.
-- Build: none configured; Pi/OpenCode load extension/plugin source directly.
+- Build: none configured; Pi loads extension source directly.
 
 ## Repo Rules
 - Keep versioned source skills; do not track local `.agents/skills/` copies.

@@ -12,9 +12,9 @@ Not meant as one bulk-installable package. Pieces used selectively.
 ## What lives here
 - `skills/writing-agents-md/` — skill for writing/reviewing `AGENTS.md`
 - `skills/agent-docs/` — skill for initializing/maintaining `.agents/docs/` and ADR placement
-- `pi-extensions/backlog-handoff/` — Pi extension for backlog handoff workflow
-- [`pi-extensions/backlog-workflow/`](pi-extensions/backlog-workflow/README.md) — refine, implement, review, and approve Backlog.md work in Pi
-- `opencode-plugins/backlog-handoff/` — OpenCode plugin port of backlog handoff workflow
+- [`pi-extensions/backlog-handoff/`](pi-extensions/backlog-handoff/README.md) — cross-project backlog handoffs
+- [`pi-extensions/backlog-workflow/`](pi-extensions/backlog-workflow/README.md) — refine, implement, review, and approve Backlog.md work
+- `pi-extensions/block-commands.ts` — block configured shell commands
 - `prompts/` — prompt templates tracked in git
 
 ## Skill installation
@@ -41,37 +41,42 @@ npx skills add Bruschkov/practical-agent-stuff --skill "writing-agents-md"
 
 After repo path changes, reinstall affected skills if old lock entries point at removed paths.
 
-## Backlog workflow installation
+## Pi extension installation
 
-Install globally from a local clone:
+Check out the asset repository once:
 
 ```bash
 git clone https://github.com/Bruschkov/practical-agent-stuff.git ~/src/practical-agent-stuff
-npm ci --prefix ~/src/practical-agent-stuff/pi-extensions/backlog-workflow
-pi install ~/src/practical-agent-stuff/pi-extensions/backlog-workflow
+cd ~/src/practical-agent-stuff
 ```
 
-For one project only, run this inside that project:
+Install any extension globally:
+
+### backlog-handoff
 
 ```bash
-pi install -l ~/src/practical-agent-stuff/pi-extensions/backlog-workflow
+pi install ./pi-extensions/backlog-handoff/index.ts
 ```
 
-Update with `git pull` and rerun `npm ci`, then restart Pi or use `/reload`. See the [backlog workflow guide](pi-extensions/backlog-workflow/README.md) for initialization and usage.
+### backlog-workflow
 
-## OpenCode plugin workflow
-
-Load the backlog-handoff plugin from source in OpenCode config:
-
-```jsonc
-{
-  "plugin": [
-    "file:///absolute/path/to/practical-agent-stuff/opencode-plugins/backlog-handoff/index.ts"
-  ]
-}
+```bash
+npm ci --prefix pi-extensions/backlog-workflow
+pi install ./pi-extensions/backlog-workflow
 ```
 
-OpenCode plugins cannot add slash commands, so backlog-handoff init/check are exposed as tools.
+### block-commands
+
+```bash
+pi install ./pi-extensions/block-commands.ts
+```
+
+For one project only, run `pi install -l` from that project with an absolute extension path.
+
+To update installed extensions, run `git pull`, rerun `npm ci --prefix pi-extensions/backlog-workflow` if using `backlog-workflow`, then restart Pi or use `/reload`.
+
+See the [backlog workflow guide](pi-extensions/backlog-workflow/README.md) for setup and usage.
+
 
 ## Prompt workflow
 Prompt templates in `prompts/` are source of truth.
