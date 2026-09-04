@@ -10,6 +10,7 @@ import {
 	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { implementerPrompt, reviewerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
 
 export { implementerPrompt, reviewerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
@@ -79,7 +80,7 @@ type WorkflowTask = {
 	acceptanceCriteria: { index: number; text: string }[];
 	comments?: { body: string; author: string }[];
 };
-type WorkflowTaskSummary = Pick<WorkflowTask, "id" | "status" | "type" | "isReady" | "assignees"> & { parentTaskId?: string | null; priority?: string; ordinal?: number };
+type WorkflowTaskSummary = Pick<WorkflowTask, "id" | "title" | "status" | "type" | "isReady" | "assignees"> & { parentTaskId?: string | null; priority?: string; ordinal?: number };
 type ImplementationEvidence = {
 	summary: string; plan: string[]; modifiedFiles: string[];
 	acceptanceCriteria: { criterion: string; status: "met" | "unmet"; evidence: string; index: number }[];
@@ -230,6 +231,15 @@ async function runBacklog(pi: ExtensionAPI, root: string, args: string[]) {
 	const output = `${result.stdout}${result.stderr ? `${result.stdout ? "\n" : ""}${result.stderr}` : ""}`.trim();
 	if (result.code !== 0) throw new Error(output || `backlog ${args.join(" ")} failed.`);
 	return output;
+}
+
+async function featureChoices(pi: ExtensionAPI, root: string) {
+	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--type", "feature", "--json"])).tasks as WorkflowTaskSummary[];
+	return tasks.sort((a, b) => (a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id)).map((task) => ({
+		id: task.id,
+		label: `${task.id}: ${task.title ?? "Untitled"}`,
+		description: `Feature (${task.status})`,
+	}));
 }
 
 async function runnableFeatureTask(pi: ExtensionAPI, root: string, featureId: string) {
@@ -467,6 +477,17 @@ async function publishRefinement(pi: ExtensionAPI, root: string, input: BacklogI
 }
 
 export default function backlogWorkflowExtension(pi: ExtensionAPI) {
+	let featureCompletions: AutocompleteItem[] = [];
+	const refreshFeatureCompletions = async (cwd: string) => {
+		try {
+			const choices = await featureChoices(pi, await projectRoot(pi, cwd));
+			featureCompletions = choices.map(({ id, label, description }) => ({ value: id, label, description }));
+		} catch {
+			featureCompletions = [];
+		}
+	};
+	pi.on("session_start", async (_event, ctx) => refreshFeatureCompletions(ctx.cwd));
+
 	if (process.env.PI_BACKLOG_WORKFLOW_WORKER === "1") {
 		pi.registerTool({
 			name: "complete_transition",
@@ -551,11 +572,24 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("implement-run", {
-		description: "Run one ready leaf task or feature descendant in an isolated implementation worker",
+		description: "Run one ready leaf task or select a feature descendant in an isolated implementation worker",
+		getArgumentCompletions: (prefix) => {
+			const query = prefix.trim().toLowerCase();
+			const matches = featureCompletions.filter((item) => item.value.toLowerCase().startsWith(query) || item.label.toLowerCase().includes(query));
+			return matches.length ? matches : null;
+		},
 		handler: async (args, ctx) => {
-			const requestedId = args.trim();
-			if (!requestedId) return void ctx.ui.notify("implement-run requires a task or feature ID", "error");
+			let requestedId = args.trim();
 			const root = await projectRoot(pi, ctx.cwd);
+			if (!requestedId) {
+				if (!ctx.hasUI) return void ctx.ui.notify("implement-run without an ID requires interactive feature selection", "error");
+				const choices = await featureChoices(pi, root);
+				featureCompletions = choices.map(({ id, label, description }) => ({ value: id, label, description }));
+				if (!choices.length) return void ctx.ui.notify("No features available", "info");
+				const selected = await ctx.ui.select("Select a feature", choices.map((choice) => choice.label));
+				if (!selected) return;
+				requestedId = choices.find((choice) => choice.label === selected)!.id;
+			}
 			let taskId = requestedId;
 			let started = false;
 			try {

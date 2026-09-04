@@ -25,6 +25,7 @@ function createdId(output, kind) {
 
 async function workflowHarness() {
 	const commands = new Map();
+	const events = new Map();
 	const messages = [];
 	const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
 	extension.default({
@@ -32,6 +33,9 @@ async function workflowHarness() {
 			commands.set(name, definition);
 		},
 		registerTool() {},
+		on(name, handler) {
+			events.set(name, handler);
+		},
 		sendUserMessage(message) {
 			messages.push(message);
 		},
@@ -44,7 +48,7 @@ async function workflowHarness() {
 			}
 		},
 	});
-	return { commands, messages };
+	return { commands, events, messages };
 }
 
 async function workflowToolHarness(exec = async (command, args, options = {}) => {
@@ -68,6 +72,7 @@ async function registeredTools(exec = async () => ({ stdout: "", stderr: "", cod
 		const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
 		extension.default({
 			registerCommand() {},
+			on() {},
 			registerTool(definition) {
 				tools.set(definition.name, definition);
 			},
@@ -80,7 +85,7 @@ async function registeredTools(exec = async () => ({ stdout: "", stderr: "", cod
 	return tools;
 }
 
-function commandContext(cwd, confirm = async () => true, input = async () => undefined) {
+function commandContext(cwd, confirm = async () => true, input = async () => undefined, select = async () => undefined) {
 	const notifications = [];
 	return {
 		notifications,
@@ -90,6 +95,7 @@ function commandContext(cwd, confirm = async () => true, input = async () => und
 			ui: {
 				confirm,
 				input,
+				select,
 				notify(message, level) {
 					notifications.push({ message, level });
 				},
@@ -105,7 +111,7 @@ test("backlog-workflow is a Pi package with its Backlog.md dependency", async ()
 
 	const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
 	assert.equal(typeof extension.default, "function");
-	assert.doesNotThrow(() => extension.default({ registerCommand() {}, registerTool() {} }));
+	assert.doesNotThrow(() => extension.default({ registerCommand() {}, registerTool() {}, on() {} }));
 });
 
 test("package-local Backlog.md CLI supports the workflow contract", async (t) => {
@@ -427,7 +433,7 @@ test("implement-run selects only a ready descendant leaf for a feature", async (
 	process.argv[1] = fakePi;
 	t.after(() => { process.argv[1] = previousScript; });
 
-	const { commands } = await workflowHarness();
+	const { commands, events } = await workflowHarness();
 	await commands.get("workflow-init").handler("", commandContext(project).ctx);
 	const featureId = createdId(await cli(project, "task", "create", "Feature", "--type", "feature", "--priority", "Medium"), "task");
 	const subFeatureId = createdId(await cli(project, "task", "create", "Group", "--type", "sub-feature", "--priority", "Medium", "--parent", featureId), "task");
@@ -443,7 +449,11 @@ test("implement-run selects only a ready descendant leaf for a feature", async (
 	await cli(project, "task", "edit", reworkId, "--status", "Rework");
 
 	const command = commands.get("implement-run");
-	await command.handler(featureId, commandContext(project).ctx);
+	await events.get("session_start")({}, { cwd: project });
+	assert.ok(command.getArgumentCompletions("").some(({ value }) => value === featureId));
+	await command.handler("", commandContext(project).ctx);
+	assert.equal(JSON.parse(await cli(project, "task", "view", reworkId, "--json")).task.status, "Rework");
+	await command.handler("", commandContext(project, async () => true, async () => undefined, async (_label, options) => options.find((option) => option.startsWith(`${featureId}:`))).ctx);
 	assert.equal(JSON.parse(await cli(project, "task", "view", reworkId, "--json")).task.status, "In Review");
 	assert.equal(JSON.parse(await cli(project, "task", "view", priorityId, "--json")).task.status, "Open");
 	await command.handler(featureId, commandContext(project).ctx);
