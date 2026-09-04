@@ -49,3 +49,6 @@
 - [ ] Add same-worktree guards: refinement cannot manipulate Git state, the controller exclusively owns the Git index, and concurrent Backlog.md writes are serialized.
 - [ ] Document installation, `/workflow-init`, `/refine`, `/implement-run`, `/workflow-inbox`, configuration requirements, recovery, and current single-controller limitation.
 - [ ] Run existing repository contract tests plus the new workflow-extension tests.
+
+## Phase 7 Documentation
+- to refine with the user
