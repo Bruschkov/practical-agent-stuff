@@ -49,7 +49,7 @@ Run `/workflow-init` once per repository. After that, use whichever entry point 
 
 If unsure, check `/workflow-inbox` first; it reports when empty. Then implement existing work or refine a new idea.
 
-With no argument, `/implement-run` opens a **feature picker**, not a task picker. After selection, it automatically chooses ready leaf tasks by rework status, priority, backlog order, and ID. Use `/implement-run <task-id>` only when you want one specific leaf.
+With no argument, `/implement-run` opens a **feature picker**, not a task picker. It places the recommended feature first and shows its next leaf; recommendation uses the same deterministic order as implementation: rework first, then priority, backlog order, and ID. You still select explicitly. Use `/implement-run <task-id>` only when you want one specific leaf.
 
 ## Example
 
@@ -65,16 +65,17 @@ Answer Pi's questions, inspect the proposed feature/tasks, and approve publicati
 
 A feature run processes ready descendants sequentially, reviews each change, handles rework, and ends with a scoped diff for final approval.
 
-### Parallel refinement and implementation
+### Parallel sessions
 
-Use separate Pi sessions to refine upcoming work while implementing an already-published feature:
+You may split the workflow across up to three Pi sessions:
 
 ```text
-Session A: /implement-run TASK-12
+Session A: /implement-run FEATURE-12  # implementation controller
 Session B: /refine Add scheduled report exports
+Session C: /workflow-inbox            # human requests and decisions
 ```
 
-These stages touch separate concerns and can proceed independently. Do not run multiple `/implement-run` controllers in the same Git worktree.
+The refinement and inbox sessions are optional: any interactive session can refine or answer inbox requests. Final feature approval is presented by the session running that feature's `/implement-run` controller. `/implement-run` is not a permanent daemon; it runs the selected work until it finishes or pauses for a failure, blocker, human decision, or final approval. Do not run multiple `/implement-run` controllers in the same Git worktree.
 
 ## State flow
 
@@ -99,7 +100,7 @@ Review-triggered rework runs automatically, up to two attempts. `Blocked` work s
 
 - `/workflow-init` — initialize or reconcile the project's Backlog.md workflow.
 - `/refine <idea-or-draft-id>` — create or resume refinement; omit the argument to select a draft or incoming handoff.
-- `/implement-run <task-or-feature-id>` — implement one leaf or burn down a feature; omit the argument for a feature picker and automatic leaf selection.
+- `/implement-run <task-or-feature-id>` — implement one leaf or burn down a feature; omit the argument for a recommended-feature picker and automatic leaf selection.
 - `/workflow-inbox` — answer requests waiting in `Needs Human`.
 - `/workflow-commit-backlog` — retry a failed scoped backlog commit without republishing tickets.
 
@@ -108,7 +109,7 @@ Interactive Pi mode is required for confirmations and human input.
 ## Architecture
 
 ```text
-Pi main session (refinement + human approval)
+Interactive Pi session(s) (refinement + inbox + human approval)
                 │
 Workflow controller (Backlog.md state + scoped Git operations)
                 │

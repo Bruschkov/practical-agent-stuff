@@ -464,7 +464,13 @@ test("implement-run processes every ready descendant leaf for a feature", async 
 	const command = commands.get("implement-run");
 	await events.get("session_start")({}, { cwd: project });
 	assert.ok(command.getArgumentCompletions("").some(({ value }) => value === featureId));
-	await command.handler("", commandContext(project).ctx);
+	let pickerOptions = [];
+	const cancelled = commandContext(project, async () => true, async () => undefined, async (_label, options) => {
+		pickerOptions = options;
+		return undefined;
+	});
+	await command.handler("", cancelled.ctx);
+	assert.match(pickerOptions.find((option) => option.startsWith(`${featureId}:`)), new RegExp(`Recommended; next ${reworkId}: Rework first \\(Rework, Low\\)`));
 	assert.equal(JSON.parse(await cli(project, "task", "view", reworkId, "--json")).task.status, "Rework");
 	await command.handler("", commandContext(project, async () => true, async () => undefined, async (_label, options) => options.find((option) => option.startsWith(`${featureId}:`))).ctx);
 	for (const [id, status] of [[blockedId, "Blocked"], [waitingId, "Open"], [humanId, "Open"], [reworkId, "Done"], [priorityId, "Done"], [runnableId, "Done"], [laterRunnableId, "Done"], [featureId, "Open"]]) {
@@ -542,13 +548,17 @@ test("implement-run reconciles and requires final human approval after every des
 	assert.match(feature.comments.at(-1).body, /Commit: [0-9a-f]+/);
 });
 
-test("feature selection follows hierarchy, dependency, priority, and resume JSON fixtures", async () => {
-	const { selectRunnableFeatureTask } = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
+test("feature selection and recommendation follow hierarchy, dependency, priority, and resume JSON fixtures", async () => {
+	const { recommendRunnableFeature, selectRunnableFeatureTask } = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
 	const fixture = async (name) => JSON.parse(await readFile(path.join(repoRoot, "tests", "pi-extensions", "backlog-workflow", "fixtures", name), "utf8")).tasks;
-	assert.equal(selectRunnableFeatureTask(await fixture("selection-initial.json"), "TASK-1"), "TASK-1.1.1.4");
-	assert.equal(selectRunnableFeatureTask(await fixture("selection-resume.json"), "TASK-1"), "TASK-1.1.1.5");
+	const initial = await fixture("selection-initial.json");
+	const resumed = await fixture("selection-resume.json");
+	assert.equal(selectRunnableFeatureTask(initial, "TASK-1"), "TASK-1.1.1.4");
+	assert.equal(selectRunnableFeatureTask(resumed, "TASK-1"), "TASK-1.1.1.5");
 	assert.equal(selectRunnableFeatureTask(await fixture("selection-priority.json"), "TASK-1"), "TASK-1.1.1.6");
 	assert.equal(selectRunnableFeatureTask(await fixture("selection-ordinal.json"), "TASK-1"), "TASK-1.1.1.7");
+	assert.deepEqual(recommendRunnableFeature(initial), { featureId: "TASK-1", taskId: "TASK-1.1.1.4" });
+	assert.deepEqual(recommendRunnableFeature(resumed), { featureId: "TASK-2", taskId: "TASK-2.1" });
 });
 
 test("refine creates or resumes a draft and continues in the main session", async (t) => {

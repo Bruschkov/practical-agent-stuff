@@ -21,5 +21,5 @@ Versioned coding-agent assets used selectively across projects.
 
 ## Docs
 - Docs map: [`.agents/docs/README.md`](.agents/docs/README.md)
-- Backlog workflow, refinement backlog commits/recovery, run-to-exhaustion, staged final feature review/commit, `/implement-run`, `/workflow-inbox`, review/rework/HITL, child-Pi runner: [`.agents/docs/backlog-workflow.md`](.agents/docs/backlog-workflow.md)
+- Backlog workflow maintainer guide: [`.agents/docs/backlog-workflow.md`](.agents/docs/backlog-workflow.md)
 - ADRs: [`.agents/docs/decisions/README.md`](.agents/docs/decisions/README.md) (ADR tools: use `.agents/docs/decisions/` as dir)

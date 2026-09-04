@@ -248,11 +248,28 @@ async function commitBacklogChanges(pi: ExtensionAPI, root: string, message: str
 	return (await pi.exec("git", ["rev-parse", "--short", "HEAD"], { cwd: root, timeout: 30_000 })).stdout.trim();
 }
 
+function priorityRank(task: WorkflowTaskSummary) {
+	const index = priorities.findIndex((priority) => priority.toLowerCase() === task.priority?.toLowerCase());
+	return index < 0 ? priorities.length : index;
+}
+
+function runnableTaskOrder(a: WorkflowTaskSummary, b: WorkflowTaskSummary) {
+	return ["Rework", "Open"].indexOf(a.status) - ["Rework", "Open"].indexOf(b.status) ||
+		priorityRank(a) - priorityRank(b) ||
+		(a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER) ||
+		(a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
 async function featureChoices(pi: ExtensionAPI, root: string) {
-	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--type", "feature", "--json"])).tasks as WorkflowTaskSummary[];
-	return tasks.sort((a, b) => (a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id)).map((task) => ({
+	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--json"])).tasks as WorkflowTaskSummary[];
+	const recommendation = recommendRunnableFeature(tasks);
+	const next = recommendation && tasks.find((task) => task.id === recommendation.taskId);
+	return tasks.filter((task) => task.type === "feature").sort((a, b) =>
+		Number(b.id === recommendation?.featureId) - Number(a.id === recommendation?.featureId) ||
+		(a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id),
+	).map((task) => ({
 		id: task.id,
-		label: `${task.id}: ${task.title ?? "Untitled"}`,
+		label: `${task.id}: ${task.title ?? "Untitled"}${recommendation?.featureId === task.id ? ` — Recommended; next ${next!.id}: ${next!.title ?? "Untitled"} (${next!.status}, ${priorities.find((priority) => priority.toLowerCase() === next!.priority?.toLowerCase()) ?? next!.priority ?? "Unprioritized"})` : ""}`,
 		description: `Feature (${task.status})`,
 	}));
 }
@@ -267,16 +284,16 @@ export function selectRunnableFeatureTask(tasks: WorkflowTaskSummary[], featureI
 		const id = pending.pop()!;
 		for (const child of children.get(id) ?? []) if (!descendants.has(child.id)) descendants.add(child.id), pending.push(child.id);
 	}
-	const priorityRank = (task: WorkflowTaskSummary) => {
-		const index = priorities.findIndex((priority) => priority.toLowerCase() === task.priority?.toLowerCase());
-		return index < 0 ? priorities.length : index;
-	};
-	return tasks.filter((task) => descendants.has(task.id) && task.type === "task" && ["Rework", "Open"].includes(task.status) && task.isReady && !task.assignees?.includes("@human")).sort((a, b) =>
-		["Rework", "Open"].indexOf(a.status) - ["Rework", "Open"].indexOf(b.status) ||
-		priorityRank(a) - priorityRank(b) ||
-		(a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER) ||
-		(a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-	)[0]?.id ?? null;
+	return tasks.filter((task) => descendants.has(task.id) && task.type === "task" && ["Rework", "Open"].includes(task.status) && task.isReady && !task.assignees?.includes("@human")).sort(runnableTaskOrder)[0]?.id ?? null;
+}
+
+export function recommendRunnableFeature(tasks: WorkflowTaskSummary[]) {
+	// ponytail: one scan per feature; index the hierarchy only if large backlogs make the picker slow.
+	const recommendation = tasks.filter((task) => task.type === "feature").map((feature) => {
+		const taskId = selectRunnableFeatureTask(tasks, feature.id);
+		return taskId ? { featureId: feature.id, taskId, task: tasks.find((task) => task.id === taskId)! } : null;
+	}).filter((candidate) => candidate !== null).sort((a, b) => runnableTaskOrder(a.task, b.task))[0];
+	return recommendation ? { featureId: recommendation.featureId, taskId: recommendation.taskId } : null;
 }
 
 async function runnableFeatureTask(pi: ExtensionAPI, root: string, featureId: string) {
