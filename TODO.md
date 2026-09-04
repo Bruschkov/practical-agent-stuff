@@ -13,7 +13,7 @@
 - [x] Add one package-local `backlog` tool wrapping the pinned CLI with structured arguments, bounded output, and serialized writes.
 - [x] Implement `/refine <idea-or-draft-id>` as an interactive main-session workflow that creates or resumes a draft and keeps accepted decisions in Backlog.md.
 - [x] Make refinement propose intent, acceptance criteria, feature/sub-feature/task decomposition, priorities, and dependencies; publish tasks only after explicit user approval.
-- [ ] Integrate optionally with `backlog-handoff`: include incoming handoffs in no-argument `/refine` selection, report inbox count/integration status, preserve handoff metadata, and move a handoff to `processed/` only after successful ticket publication.
+- [x] Integrate optionally with `backlog-handoff`: include incoming handoffs in no-argument `/refine` selection, report inbox count/integration status, preserve handoff metadata, and move a handoff to `processed/` only after successful ticket publication.
 - [ ] Expose `backlog-handoff` to implementation workers when installed so discovered cross-project work can be routed without making either extension a hard dependency.
 - [ ] Add refinement contract tests covering draft creation/resume, the approval boundary, handoff discovery/publication, and the handoff file-format contract.
 

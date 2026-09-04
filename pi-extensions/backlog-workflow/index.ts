@@ -1,4 +1,4 @@
-import { readFile, access, writeFile } from "node:fs/promises";
+import { readFile, access, writeFile, readdir, mkdir, rename } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -59,6 +59,8 @@ const BACKLOG_SCHEMA = Type.Object({
 });
 type BacklogInput = Static<typeof BACKLOG_SCHEMA>;
 type ProposedTask = Static<typeof PROPOSED_TASK_SCHEMA>;
+type IncomingHandoff = { filePath: string; title: string; content: string };
+type HandoffInbox = { status: string; handoffs: IncomingHandoff[]; processedDir?: string };
 
 function yamlValue(value: string) {
 	return JSON.stringify(value);
@@ -203,6 +205,70 @@ async function runBacklog(pi: ExtensionAPI, root: string, args: string[]) {
 	return output;
 }
 
+function handoffFromFile(filePath: string, content: string): IncomingHandoff | null {
+	const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n\r?\n# (.+?)\r?\n/);
+	if (!match || !/^status:\s*"inbox"\s*$/m.test(match[1])) return null;
+	return { filePath, title: match[2], content };
+}
+
+async function incomingHandoffs(root: string): Promise<HandoffInbox> {
+	const configFile = path.join(root, ".backlog-handoff", "config.json");
+	try {
+		const config = JSON.parse(await readFile(configFile, "utf8"));
+		if (typeof config.projectId !== "string" || typeof config.metaRoot !== "string") throw new Error("config requires projectId and metaRoot strings");
+		const registryDir = path.join(path.resolve(root, config.metaRoot), ".backlog-handoff", "projects");
+		const entries = await readdir(registryDir);
+		let handoffDir = ".backlog-handoff/inbox";
+		for (const entry of entries.filter((entry) => entry.endsWith(".json"))) {
+			const project = JSON.parse(await readFile(path.join(registryDir, entry), "utf8"));
+			if (project.id === config.projectId && typeof project.handoffDir === "string") handoffDir = project.handoffDir;
+		}
+		const inboxDir = path.join(root, handoffDir);
+		const files = await readdir(inboxDir, { withFileTypes: true });
+		const handoffs = (await Promise.all(files.filter((file) => file.isFile() && file.name.endsWith(".md")).map(async (file) =>
+			handoffFromFile(path.join(inboxDir, file.name), await readFile(path.join(inboxDir, file.name), "utf8")),
+		))).filter((handoff): handoff is IncomingHandoff => handoff !== null);
+		return { status: `backlog-handoff available: ${handoffs.length} inbox item${handoffs.length === 1 ? "" : "s"}`, handoffs, processedDir: path.join(root, ".backlog-handoff", "processed") };
+	} catch (error: any) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "backlog-handoff unavailable (not configured)", handoffs: [] };
+		return { status: `backlog-handoff unavailable (${error?.message ?? String(error)})`, handoffs: [] };
+	}
+}
+
+function handoffMarker(root: string, handoff: IncomingHandoff) {
+	return `<!-- backlog-handoff: ${JSON.stringify(path.relative(root, handoff.filePath))} -->`;
+}
+
+function draftHandoffPath(draft: string) {
+	const match = draft.match(/^<!-- backlog-handoff: (.+) -->$/m);
+	if (!match) return null;
+	try {
+		const file = JSON.parse(match[1]);
+		return typeof file === "string" ? file : null;
+	} catch {
+		return null;
+	}
+}
+
+function handoffDraftDescription(root: string, handoff: IncomingHandoff) {
+	return `## Intent\n${handoff.title}\n\n## Incoming Backlog Handoff\n${handoffMarker(root, handoff)}\n\nSource file: \`${path.relative(root, handoff.filePath)}\`\n\n### Original handoff\n${handoff.content}\n\n## Accepted decisions\n- Intent: ${handoff.title}\n\nApproval: pending`;
+}
+
+async function movePublishedHandoff(root: string, draft: string) {
+	const file = draftHandoffPath(draft);
+	if (!file) return null;
+	const inbox = await incomingHandoffs(root);
+	const handoff = inbox.handoffs.find((item) => path.relative(root, item.filePath) === file);
+	if (!handoff || !inbox.processedDir) return "Handoff remains in inbox: it is no longer available through backlog-handoff.";
+	try {
+		await mkdir(inbox.processedDir, { recursive: true });
+		await rename(handoff.filePath, path.join(inbox.processedDir, path.basename(handoff.filePath)));
+		return `Moved handoff to ${inbox.processedDir}.`;
+	} catch (error: any) {
+		return `Handoff remains in inbox: ${error?.message ?? String(error)}`;
+	}
+}
+
 function validateProposal(tasks: ProposedTask[]) {
 	const byKey = new Map(tasks.map((task) => [task.key, task]));
 	if (byKey.size !== tasks.length) throw new Error("Proposed task keys must be unique.");
@@ -226,12 +292,13 @@ async function publishRefinement(pi: ExtensionAPI, root: string, input: BacklogI
 	if (!tasks?.length) throw new Error("'proposedTasks' is required for refinement_publish.");
 	if (!ctx.hasUI) throw new Error("refinement_publish requires interactive mode.");
 	validateProposal(tasks);
-	await runBacklog(pi, root, ["draft", "view", draftId, "--plain"]);
+	const draft = await runBacklog(pi, root, ["draft", "view", draftId, "--plain"]);
 	if (!await ctx.ui.confirm("Publish refinement?", `Draft: ${draftId}\nCreate ${tasks.length} proposed ticket${tasks.length === 1 ? "" : "s"} and archive the draft?`)) {
 		return "Publication cancelled; draft remains pending.";
 	}
 
 	const ids = new Map<string, string>();
+	let published = false;
 	try {
 		while (ids.size < tasks.length) {
 			let created = false;
@@ -251,12 +318,14 @@ async function publishRefinement(pi: ExtensionAPI, root: string, input: BacklogI
 		for (const task of tasks) {
 			if (task.dependsOn?.length) await runBacklog(pi, root, ["task", "edit", ids.get(task.key)!, "--depends-on", ...task.dependsOn.map((key) => ids.get(key)!)]);
 		}
-		const published = tasks.map((task) => `- ${task.key}: ${ids.get(task.key)}`).join("\n");
-		await runBacklog(pi, root, ["draft", "edit", draftId, "--comment", `Approval: approved\n\nPublished tickets:\n${published}`, "--comment-author", "@human"]);
+		const publishedTickets = tasks.map((task) => `- ${task.key}: ${ids.get(task.key)}`).join("\n");
+		await runBacklog(pi, root, ["draft", "edit", draftId, "--comment", `Approval: approved\n\nPublished tickets:\n${publishedTickets}`, "--comment-author", "@human"]);
 		await runBacklog(pi, root, ["draft", "archive", draftId]);
-		return `Published and archived ${draftId}: ${[...ids.values()].join(", ")}`;
+		published = true;
+		const handoffResult = await movePublishedHandoff(root, draft);
+		return `Published and archived ${draftId}: ${[...ids.values()].join(", ")}${handoffResult ? `\n${handoffResult}` : ""}`;
 	} catch (error) {
-		if (ids.size) await runBacklog(pi, root, ["draft", "edit", draftId, "--comment", `Publication failed after creating: ${[...ids.values()].join(", ")}`, "--comment-author", "@workflow"]);
+		if (ids.size && !published) await runBacklog(pi, root, ["draft", "edit", draftId, "--comment", `Publication failed after creating: ${[...ids.values()].join(", ")}`, "--comment-author", "@workflow"]);
 		throw error;
 	}
 }
@@ -312,17 +381,42 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			const value = args.trim();
-			if (!value) {
-				ctx.ui.notify("Usage: /refine <idea-or-draft-id>", "error");
-				return;
-			}
-
+			let value = args.trim();
 			const root = await projectRoot(pi, ctx.cwd);
 			try {
+				let selectedHandoff: IncomingHandoff | undefined;
+				if (!value) {
+					const [drafts, inbox] = await Promise.all([
+						runBacklog(pi, root, ["draft", "list", "--plain"]),
+						incomingHandoffs(root),
+					]);
+					ctx.ui.notify(inbox.status, inbox.handoffs.length ? "info" : "warning");
+					const choices = new Map<string, string | IncomingHandoff>();
+					for (const line of drafts.split("\n")) {
+						const match = line.match(/^(DRAFT-\d+)\b/i);
+						if (match) choices.set(`Draft: ${line}`, match[1].toUpperCase());
+					}
+					for (const handoff of inbox.handoffs) choices.set(`Handoff: ${handoff.title} (${path.relative(root, handoff.filePath)})`, handoff);
+					if (!choices.size) {
+						ctx.ui.notify("No active drafts or incoming handoffs. Use /refine <idea> to start one.", "info");
+						return;
+					}
+					const choice = await ctx.ui.select("Select a refinement", [...choices.keys()]);
+					if (!choice) return;
+					const selected = choices.get(choice)!;
+					if (typeof selected === "string") value = selected;
+					else selectedHandoff = selected;
+				}
+
 				let draftId: string;
 				let created = false;
-				if (/^DRAFT-\d+$/i.test(value)) {
+				if (selectedHandoff) {
+					const output = await runBacklog(pi, root, ["draft", "create", selectedHandoff.title, "--description", handoffDraftDescription(root, selectedHandoff)]);
+					const match = output.match(/Created draft (\S+)/);
+					if (!match) throw new Error(`Could not determine the created draft ID: ${output}`);
+					draftId = match[1];
+					created = true;
+				} else if (/^DRAFT-\d+$/i.test(value)) {
 					draftId = value.toUpperCase();
 					await runBacklog(pi, root, ["draft", "view", draftId, "--plain"]);
 				} else {
@@ -337,7 +431,7 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				}
 
 				ctx.ui.notify(`${created ? "Created" : "Resuming"} refinement draft ${draftId}`, "success");
-				pi.sendUserMessage(`Refine Backlog.md draft ${draftId} in this main session. ${created ? "Start from its recorded intent." : "Read the existing draft first."} Ask focused questions, then propose intent, concrete acceptance criteria, and a feature/sub-feature/task hierarchy with priorities and dependencies. Record every accepted decision and the full proposal in the draft's description under "Accepted decisions". Keep \`Approval: pending\` and do not create or promote tasks. Only after the user explicitly approves the displayed proposal, call backlog with \`operation: "refinement_publish"\`, the draft ID, and matching \`proposedTasks\`; it will ask final confirmation, publish tickets, record their IDs, and archive the draft.`);
+				pi.sendUserMessage(`Refine Backlog.md draft ${draftId} in this main session. ${selectedHandoff ? "The draft contains an incoming backlog-handoff; preserve its metadata and original request while refining it." : created ? "Start from its recorded intent." : "Read the existing draft first."} Ask focused questions, then propose intent, concrete acceptance criteria, and a feature/sub-feature/task hierarchy with priorities and dependencies. Record every accepted decision and the full proposal in the draft's description under "Accepted decisions". Keep \`Approval: pending\` and do not create or promote tasks. Only after the user explicitly approves the displayed proposal, call backlog with \`operation: "refinement_publish"\`, the draft ID, and matching \`proposedTasks\`; it will ask final confirmation, publish tickets, record their IDs, archive the draft, and then move any linked handoff to processed.`);
 			} catch (error: any) {
 				ctx.ui.notify(`refine failed: ${error?.message ?? String(error)}`, "error");
 			}

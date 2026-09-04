@@ -23,9 +23,11 @@
 - `task_create` supplies `Medium` when `priority` is absent. An edit must provide a changed field, and `commentAuthor` requires `comment`.
 
 ## Refinement
-- `/refine <idea-or-draft-id>` requires interactive mode. An idea creates a draft with its intent, an `Accepted decisions` section, and `Approval: pending`; a `DRAFT-<number>` argument validates and resumes that draft.
+- `/refine` requires interactive mode. `/refine <idea-or-draft-id>` creates a draft or resumes a `DRAFT-<number>`; no-argument `/refine` selects an active draft or valid incoming backlog-handoff and reports handoff integration status and inbox count.
+- Handoff integration is optional and has no package dependency. When `.backlog-handoff/config.json` and its registry are available, the workflow reads the current project's configured inbox (including `handoffDir`); unavailable or invalid setup leaves ordinary idea/draft refinement available.
+- Selecting a handoff creates a draft containing its source path and complete original content. Preserve the generated `backlog-handoff` marker and handoff metadata while refining.
 - The main session reads a resumed draft, persists accepted decisions, and proposes intent, concrete acceptance criteria, and a feature/sub-feature/task hierarchy with priorities and dependencies. It must not create or promote tasks while approval remains pending.
-- After the user explicitly approves the displayed proposal, use `refinement_publish` with the draft ID and matching `proposedTasks`. It requires final interactive confirmation, validates proposal-local hierarchy/dependencies, creates tickets with explicit or `Medium` priority, records approval and published IDs in the draft, then archives it. Declining confirmation leaves the draft pending and creates no tickets.
+- After the user explicitly approves the displayed proposal, use `refinement_publish` with the draft ID and matching `proposedTasks`. It requires final interactive confirmation, validates proposal-local hierarchy/dependencies, creates tickets with explicit or `Medium` priority, records approval and published IDs in the draft, then archives it. Only then does it move a linked handoff to `.backlog-handoff/processed/`; a move failure leaves the source in the inbox and reports it. Declining confirmation leaves the draft and handoff pending and creates no tickets.
 
 ## Workflow configuration
 - The required types, statuses, priorities, refinement approval boundary, HITL handling, and Definition of Done are defined by [Adopt a Backlog.md workflow contract](decisions/2026-09-03-adopt-backlog-workflow-contract.md).
