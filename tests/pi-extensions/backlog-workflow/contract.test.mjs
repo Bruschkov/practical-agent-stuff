@@ -2,11 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
-import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
@@ -24,6 +23,42 @@ function createdId(output, kind) {
 	return match[1];
 }
 
+async function workflowHarness() {
+	const commands = new Map();
+	const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
+	extension.default({
+		registerCommand(name, definition) {
+			commands.set(name, definition);
+		},
+		async exec(command, args, options = {}) {
+			try {
+				const result = await run(command, args, { cwd: options.cwd, maxBuffer: 1024 * 1024 });
+				return { ...result, code: 0, killed: false };
+			} catch (error) {
+				return { stdout: error.stdout ?? "", stderr: error.stderr ?? "", code: error.code ?? 1, killed: false };
+			}
+		},
+	});
+	return commands.get("workflow-init");
+}
+
+function commandContext(cwd, confirm = async () => true) {
+	const notifications = [];
+	return {
+		notifications,
+		ctx: {
+			hasUI: true,
+			cwd,
+			ui: {
+				confirm,
+				notify(message, level) {
+					notifications.push({ message, level });
+				},
+			},
+		},
+	};
+}
+
 test("backlog-workflow is a Pi package with its Backlog.md dependency", async () => {
 	const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
 	assert.deepEqual(manifest.pi.extensions, ["./index.ts"]);
@@ -31,7 +66,7 @@ test("backlog-workflow is a Pi package with its Backlog.md dependency", async ()
 
 	const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
 	assert.equal(typeof extension.default, "function");
-	assert.doesNotThrow(() => extension.default({}));
+	assert.doesNotThrow(() => extension.default({ registerCommand() {} }));
 });
 
 test("package-local Backlog.md CLI supports the workflow contract", async (t) => {
@@ -70,4 +105,52 @@ test("package-local Backlog.md CLI supports the workflow contract", async (t) =>
 	assert.match(await cli(project, "draft", "view", draftId, "--plain"), /Idea updated/);
 	await cli(project, "draft", "archive", draftId);
 	await cli(project, "task", "archive", childId);
+});
+
+test("workflow-init initializes and validates the required configuration idempotently", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-init-"));
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+
+	const command = await workflowHarness();
+	assert.ok(command);
+	const first = commandContext(project);
+	await command.handler("", first.ctx);
+	assert.equal(first.notifications.at(-1).level, "success");
+	assert.equal((await cli(project, "config", "get", "defaultStatus")).trim(), "Open");
+	assert.equal((await cli(project, "config", "get", "statuses")).trim(), "Open, In Progress, In Review, Rework, Blocked, Needs Human, Done");
+	assert.equal((await cli(project, "config", "get", "types")).trim(), "feature, sub-feature, task");
+	assert.equal((await cli(project, "config", "get", "priorities")).trim(), "Critical, High, Medium, Low");
+	assert.match(await cli(project, "config", "get", "definitionOfDone"), /Acceptance criteria are met/);
+
+	const repeat = commandContext(project, async () => assert.fail("matching config must not request confirmation"));
+	await command.handler("", repeat.ctx);
+	assert.equal(repeat.notifications.at(-1).level, "success");
+});
+
+test("workflow-init requires Git and never changes existing config without confirmation", async (t) => {
+	const command = await workflowHarness();
+	const noGit = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-no-git-"));
+	t.after(() => rm(noGit, { recursive: true, force: true }));
+	const rejected = commandContext(noGit);
+	await command.handler("", rejected.ctx);
+	assert.match(rejected.notifications.at(-1).message, /requires a Git repository/);
+
+	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-reconcile-"));
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Existing", "--defaults", "--integration-mode", "none");
+	const config = path.join(project, "backlog", "config.yml");
+	await writeFile(config, `${await readFile(config, "utf8")}\nstatuses: ["Wrong"]\n`);
+	const before = await readFile(config, "utf8");
+	const declined = commandContext(project, async () => false);
+	await command.handler("", declined.ctx);
+	assert.equal(await readFile(config, "utf8"), before);
+	assert.equal(declined.notifications.at(-1).message, "Cancelled");
+
+	const accepted = commandContext(project);
+	await command.handler("", accepted.ctx);
+	assert.equal(accepted.notifications.at(-1).level, "success");
+	assert.equal((await cli(project, "config", "get", "statuses")).trim(), "Open, In Progress, In Review, Rework, Blocked, Needs Human, Done");
 });

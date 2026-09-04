@@ -7,7 +7,7 @@ Versioned coding-agent assets used selectively across projects.
 - Node.js built-in test runner for contract tests.
 
 ## Build & Test
-- Tests: `node --test tests/pi-extensions/*/contract.test.mjs` (handoff suite currently needs the Pi package-import migration)
+- Tests: `node --test tests/pi-extensions/*/contract.test.mjs`; install package-local dependencies first where required (see package docs).
 - Lint: none configured.
 - Build: none configured; Pi/OpenCode load extension/plugin source directly.
 
