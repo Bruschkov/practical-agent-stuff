@@ -437,9 +437,20 @@ test("implement-run selects only a ready descendant leaf for a feature", async (
 	const humanId = createdId(await cli(project, "task", "create", "Human owned", "--type", "task", "--priority", "Medium", "--parent", subFeatureId, "--ac", "Works"), "task");
 	await cli(project, "task", "edit", humanId, "--assignee", "@human");
 	const runnableId = createdId(await cli(project, "task", "create", "Runnable", "--type", "task", "--priority", "Medium", "--parent", subFeatureId, "--ac", "Works"), "task");
+	const laterRunnableId = createdId(await cli(project, "task", "create", "Later runnable", "--type", "task", "--priority", "Medium", "--parent", subFeatureId, "--ac", "Works"), "task");
+	const priorityId = createdId(await cli(project, "task", "create", "Higher priority", "--type", "task", "--priority", "High", "--parent", subFeatureId, "--ac", "Works"), "task");
+	const reworkId = createdId(await cli(project, "task", "create", "Rework first", "--type", "task", "--priority", "Low", "--parent", subFeatureId, "--ac", "Works"), "task");
+	await cli(project, "task", "edit", reworkId, "--status", "Rework");
 
-	await commands.get("implement-run").handler(featureId, commandContext(project).ctx);
-	for (const [id, status] of [[blockedId, "Blocked"], [waitingId, "Open"], [humanId, "Open"], [runnableId, "In Review"]]) {
+	const command = commands.get("implement-run");
+	await command.handler(featureId, commandContext(project).ctx);
+	assert.equal(JSON.parse(await cli(project, "task", "view", reworkId, "--json")).task.status, "In Review");
+	assert.equal(JSON.parse(await cli(project, "task", "view", priorityId, "--json")).task.status, "Open");
+	await command.handler(featureId, commandContext(project).ctx);
+	assert.equal(JSON.parse(await cli(project, "task", "view", priorityId, "--json")).task.status, "In Review");
+	assert.equal(JSON.parse(await cli(project, "task", "view", runnableId, "--json")).task.status, "Open");
+	await command.handler(featureId, commandContext(project).ctx);
+	for (const [id, status] of [[blockedId, "Blocked"], [waitingId, "Open"], [humanId, "Open"], [runnableId, "In Review"], [laterRunnableId, "Open"]]) {
 		assert.equal(JSON.parse(await cli(project, "task", "view", id, "--json")).task.status, status);
 	}
 });

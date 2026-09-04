@@ -40,7 +40,7 @@ Use only these statuses:
 - `Needs Human`: a worker needs a human answer or decision. Assign `@human` and persist the request before presenting UI.
 - `Done`: completion criteria below are satisfied.
 
-The controller changes status. Workers return outcomes, not arbitrary status changes. A cancelled or failed run records its outcome and evidence, returns the ticket to `Open`, and is selected ahead of ordinary `Open` work. `Blocked` and `Needs Human` tickets are never runnable. On a human response, persist the answer, clear `@human`, and return the ticket to `Open` or `Rework` as appropriate. `Done` is terminal unless a human explicitly reopens the ticket.
+The controller changes status. Workers return outcomes, not arbitrary status changes. A cancelled or failed run records its outcome and evidence and returns the ticket to `Open`. `Rework` is selected ahead of ordinary `Open` work; returned `Open` work follows normal priority ordering (clarified 2026-09-04). `Blocked` and `Needs Human` tickets are never runnable. On a human response, persist the answer, clear `@human`, and return the ticket to `Open` or `Rework` as appropriate. `Done` is terminal unless a human explicitly reopens the ticket.
 
 ### Refinement
 
@@ -111,3 +111,5 @@ Revisit this contract if Backlog.md cannot represent the required configuration 
 2026-09-04: A completed reviewer run returns JSON with an `approved` or `rework` verdict and concrete findings; do not add another `complete_transition` outcome. The controller persists that evidence as an `@reviewer` comment. It immediately reruns `rework` through the implementer, allowing two persisted attempts. A third rework verdict pauses the ticket in `Needs Human`, assigns `@human`, and records the cap diagnostic.
 
 2026-09-04: An implementation or reviewer `needs_human` outcome persists its request and assigns `@human` before the controller prompts. A non-empty response is persisted as an `@human` comment, clears the assignment, and reopens the task; dismissal or unavailable UI leaves the task pending and resumable in `Needs Human`.
+
+2026-09-04: Feature-child selection orders runnable `Rework` before `Open`, then configured priority, Backlog ordinal, and task ID. `Rework` is the only persisted resume class; do not add an interrupted marker or resume stale `In Progress` work. Failed or cancelled work returned to `Open` follows ordinary priority ordering.

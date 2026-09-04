@@ -36,7 +36,7 @@
 ## Phase 5 — Feature burn-down
 
 - [x] Extend `/implement-run <feature-id>` to discover descendant leaf tasks and select only tasks whose dependencies are complete and which are neither blocked nor human-owned.
-- [ ] Apply deterministic ordering: interrupted/rework first, then configured priority, Backlog order, and task ID.
+- [x] Apply deterministic ordering: rework first, then configured priority, Backlog order, and task ID.
 - [ ] Add no-argument feature selection with command completion; never switch features silently.
 - [ ] Continue sequentially through implementation, review, rework, and HITL until the selected feature has no runnable tasks.
 - [ ] Test hierarchy, dependency, priority, and resume selection against real Backlog.md JSON fixtures.

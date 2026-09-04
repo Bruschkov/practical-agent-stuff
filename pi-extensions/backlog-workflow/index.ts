@@ -79,7 +79,7 @@ type WorkflowTask = {
 	acceptanceCriteria: { index: number; text: string }[];
 	comments?: { body: string; author: string }[];
 };
-type WorkflowTaskSummary = Pick<WorkflowTask, "id" | "status" | "type" | "isReady" | "assignees"> & { parentTaskId?: string | null };
+type WorkflowTaskSummary = Pick<WorkflowTask, "id" | "status" | "type" | "isReady" | "assignees"> & { parentTaskId?: string | null; priority?: string; ordinal?: number };
 type ImplementationEvidence = {
 	summary: string; plan: string[]; modifiedFiles: string[];
 	acceptanceCriteria: { criterion: string; status: "met" | "unmet"; evidence: string; index: number }[];
@@ -243,7 +243,16 @@ async function runnableFeatureTask(pi: ExtensionAPI, root: string, featureId: st
 		const id = pending.pop()!;
 		for (const child of children.get(id) ?? []) if (!descendants.has(child.id)) descendants.add(child.id), pending.push(child.id);
 	}
-	return tasks.find((task) => descendants.has(task.id) && task.type === "task" && task.status === "Open" && task.isReady && !task.assignees?.includes("@human"))?.id ?? null;
+	const priorityRank = (task: WorkflowTaskSummary) => {
+		const index = priorities.findIndex((priority) => priority.toLowerCase() === task.priority?.toLowerCase());
+		return index < 0 ? priorities.length : index;
+	};
+	return tasks.filter((task) => descendants.has(task.id) && task.type === "task" && ["Rework", "Open"].includes(task.status) && task.isReady && !task.assignees?.includes("@human")).sort((a, b) =>
+		["Rework", "Open"].indexOf(a.status) - ["Rework", "Open"].indexOf(b.status) ||
+		priorityRank(a) - priorityRank(b) ||
+		(a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER) ||
+		(a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+	)[0]?.id ?? null;
 }
 
 function implementationEvidence(output: string, task: WorkflowTask): ImplementationEvidence {
@@ -556,7 +565,7 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 					if (!taskId) throw new Error(`${requestedId} has no ready, unblocked descendant leaf task.`);
 				}
 				const task = taskId === requestedId ? requestedTask : JSON.parse(await runBacklog(pi, root, ["task", "view", taskId, "--json"])).task as WorkflowTask;
-				if (task.type !== "task" || task.status !== "Open" || !task.isReady || task.readiness?.isBlocked || task.assignees?.includes("@human") || task.subtasks.length) throw new Error(`${taskId} is not a ready, unblocked leaf task.`);
+				if (task.type !== "task" || !["Open", "Rework"].includes(task.status) || !task.isReady || task.readiness?.isBlocked || task.assignees?.includes("@human") || task.subtasks.length) throw new Error(`${taskId} is not a ready, unblocked leaf task.`);
 				let attempt = reworkAttempts(task);
 				const implement = async (rework = false) => {
 					await runBacklog(pi, root, ["task", "edit", task.id, "--status", "In Progress", "--comment", rework ? `Rework implementation worker started (attempt ${attempt} of ${maxReworkAttempts}).` : "Implementation worker started.", "--comment-author", "@workflow"]);
