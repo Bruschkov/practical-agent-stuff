@@ -54,6 +54,14 @@ export function reviewerPrompt(taskId: string) {
 3. Then call complete_transition exactly once as your final action: "completed" when the review was completed, "needs_human" for a specific human decision, "blocked" for an external blocker, or "failed" when the review could not be completed.`;
 }
 
+export function reconcilerPrompt(featureId: string) {
+	return `You are the read-only reconciliation worker for completed Backlog.md feature ${JSON.stringify(featureId)}.
+
+1. Read the feature and its descendants with the backlog tool. Confirm every descendant task is Done, check the feature and parent acceptance criteria, inspect affected project documentation and durable technical decisions, and look for related Backlog.md tickets that remain relevant or conflicting.
+2. Before ending, respond with one JSON object (no Markdown): {"summary": string, "checks": [{"area": "parent acceptance criteria"|"documentation"|"technical decisions"|"related tickets", "status": "passed", "evidence": string}]}. Include exactly one passed check for each area only when reconciliation is clean. If anything needs a human decision, respond with {"request": string} instead. Do not modify files, Backlog.md, or Git state; your tools are read-only.
+3. Then call complete_transition exactly once as your final action: "completed" only when reconciliation is clean, "needs_human" for a specific human decision, "blocked" for an external blocker, or "failed" when reconciliation could not be completed.`;
+}
+
 function invocation() {
 	const script = process.argv[1];
 	if (script && !script.startsWith("/$bunfs/root/") && existsSync(script)) return { command: process.execPath, args: [script] };

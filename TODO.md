@@ -43,7 +43,7 @@
 
 ## Phase 6 — Reconciliation and completion
 
-- [ ] Add a reconciler worker that checks parent acceptance criteria, affected project documentation, durable technical decisions, and related Backlog.md tickets after all implementation tasks finish.
+- [x] Add a reconciler worker that checks parent acceptance criteria, affected project documentation, durable technical decisions, and related Backlog.md tickets after all implementation tasks finish.
 - [ ] Present a final feature summary, checks, review evidence, and scoped diff for explicit human approval.
 - [ ] Implement optional final commit using explicitly owned paths only; never use `git add -A`.
 - [ ] Add same-worktree guards: refinement cannot manipulate Git state, the controller exclusively owns the Git index, and concurrent Backlog.md writes are serialized.

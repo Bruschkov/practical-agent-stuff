@@ -80,7 +80,7 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 
 - [x] `/workflow-init` creates or reconciles a Backlog.md configuration containing exactly the specified task types, statuses, and priorities only after required confirmation; workflow-created tickets without a chosen priority receive explicit `Medium`.
 - [x] Refinement contract tests prove that unapproved drafts create no tasks, approved drafts record published ticket IDs before archiving, and valid incoming handoffs preserve their source format and move to `processed/` only after publication.
-- [ ] Implementation contract tests prove `Needs Human` assigns `@human`, blocked and human-owned tasks are not selected, rework is selected before ordinary open work, and `Done` requires persisted evidence.
+- [x] Implementation contract tests prove `Needs Human` assigns `@human`, blocked and human-owned tasks are not selected, rework is selected before ordinary open work, and `Done` requires persisted evidence.
 - [x] Review contract tests prove reviewer evidence is persisted, two rework attempts rerun the implementer, and the cap assigns `@human` with diagnostics.
 - [x] `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs` passes.
 
@@ -115,3 +115,5 @@ Revisit this contract if Backlog.md cannot represent the required configuration 
 2026-09-04: Feature-child selection orders runnable `Rework` before `Open`, then configured priority, Backlog ordinal, and task ID. `Rework` is the only persisted resume class; do not add an interrupted marker or resume stale `In Progress` work. Failed or cancelled work returned to `Open` follows ordinary priority ordering.
 
 2026-09-04: A selected feature repeats deterministic selection after each leaf reaches review, blocks, or pauses for deferred human input, instead of requiring one `/implement-run` invocation per task. A failed implementation remains `Open` and ends that invocation to avoid an unbounded automatic retry loop.
+
+2026-09-04: After an approved review has been persisted, the controller moves the leaf to `Done`; it does not treat `In Review` as complete. Once every descendant leaf is `Done`, a read-only reconciler checks parent acceptance criteria, affected documentation, durable technical decisions, and related Backlog.md tickets. It persists clean reconciliation evidence on the feature and leaves the feature `In Review` until the separate final human-approval step is implemented.

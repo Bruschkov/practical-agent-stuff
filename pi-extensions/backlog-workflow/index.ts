@@ -11,9 +11,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { implementerPrompt, reviewerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
+import { implementerPrompt, reviewerPrompt, reconcilerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
 
-export { implementerPrompt, reviewerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
+export { implementerPrompt, reviewerPrompt, reconcilerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
 
 const cli = fileURLToPath(new URL(`./node_modules/.bin/backlog${process.platform === "win32" ? ".cmd" : ""}`, import.meta.url));
 const configPaths = ["backlog.config.yml", "backlog/config.yml", ".backlog/config.yml"];
@@ -89,6 +89,7 @@ type ImplementationEvidence = {
 	blockers: string[];
 };
 type ReviewEvidence = { verdict: "approved" | "rework"; findings: string[] };
+type ReconciliationEvidence = { summary: string; checks: { area: "parent acceptance criteria" | "documentation" | "technical decisions" | "related tickets"; status: "passed"; evidence: string }[] };
 
 function yamlValue(value: string) {
 	return JSON.stringify(value);
@@ -269,6 +270,23 @@ async function runnableFeatureTask(pi: ExtensionAPI, root: string, featureId: st
 	return selectRunnableFeatureTask(tasks, featureId);
 }
 
+function featureLeaves(tasks: WorkflowTaskSummary[], featureId: string) {
+	const children = new Map<string, WorkflowTaskSummary[]>();
+	for (const task of tasks) if (task.parentTaskId) children.set(task.parentTaskId, [...(children.get(task.parentTaskId) ?? []), task]);
+	const descendants = new Set<string>();
+	for (const pending = [featureId]; pending.length;) {
+		const id = pending.pop()!;
+		for (const child of children.get(id) ?? []) if (!descendants.has(child.id)) descendants.add(child.id), pending.push(child.id);
+	}
+	return tasks.filter((task) => descendants.has(task.id) && task.type === "task");
+}
+
+async function featureReadyForReconciliation(pi: ExtensionAPI, root: string, featureId: string) {
+	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--json"])).tasks as WorkflowTaskSummary[];
+	const leaves = featureLeaves(tasks, featureId);
+	return leaves.length > 0 && leaves.every((task) => task.status === "Done");
+}
+
 function implementationEvidence(output: string, task: WorkflowTask): ImplementationEvidence {
 	let value: any;
 	try { value = JSON.parse(output); } catch { throw new Error("Worker did not return its required JSON evidence."); }
@@ -300,9 +318,31 @@ function reviewEvidence(output: string): ReviewEvidence {
 	return value;
 }
 
+function reconciliationEvidence(output: string): ReconciliationEvidence {
+	let value: any;
+	try { value = JSON.parse(output); } catch { throw new Error("Reconciler did not return its required JSON evidence."); }
+	const areas = ["parent acceptance criteria", "documentation", "technical decisions", "related tickets"];
+	if (!value || typeof value.summary !== "string" || !Array.isArray(value.checks) || value.checks.length !== areas.length || !value.checks.every((check: any) => check && areas.includes(check.area) && check.status === "passed" && typeof check.evidence === "string") || new Set(value.checks.map((check: any) => check.area)).size !== areas.length) throw new Error("Reconciler returned invalid JSON evidence.");
+	return value;
+}
+
 async function persistReview(pi: ExtensionAPI, root: string, task: WorkflowTask, review: ReviewEvidence) {
 	const comment = ["## Automated review", `Verdict: ${review.verdict}`, "## Findings", ...(review.findings.length ? review.findings.map((finding) => `- ${finding}`) : ["- None"])].join("\n");
 	await runBacklog(pi, root, ["task", "edit", task.id, "--comment", comment, "--comment-author", "@reviewer"]);
+}
+
+async function reconcileFeature(pi: ExtensionAPI, root: string, featureId: string, ctx: any) {
+	const result = await runChildPi({ cwd: root, prompt: reconcilerPrompt(featureId), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel, readOnly: true });
+	if (result.failure || !result.outcome) throw new Error(result.failure || "Reconciler did not return an outcome.");
+	if (result.outcome === "needs_human") {
+		await requestHuman(pi, root, featureId, requestText(result.output), ctx);
+		return "needs_human";
+	}
+	if (result.outcome !== "completed") throw new Error(`Reconciliation did not complete: ${result.outcome}.`);
+	const evidence = reconciliationEvidence(result.output);
+	const comment = ["## Reconciliation", evidence.summary, "## Checks", ...evidence.checks.map((check) => `- ${check.area}: ${check.evidence}`), "## Usage", JSON.stringify(result.usage)].join("\n");
+	await runBacklog(pi, root, ["task", "edit", featureId, "--status", "In Review", "--comment", comment, "--comment-author", "@reconciler"]);
+	return "completed";
 }
 
 function reworkAttempts(task: WorkflowTask) {
@@ -600,7 +640,11 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				const requestedTask = JSON.parse(await runBacklog(pi, root, ["task", "view", requestedId, "--json"])).task as WorkflowTask;
 				if (requestedTask.type === "feature") {
 					taskId = await runnableFeatureTask(pi, root, requestedId) ?? "";
-					if (!taskId) return void ctx.ui.notify(`${requestedId}: no runnable descendant leaf tasks`, "info");
+					if (!taskId) {
+						if (!await featureReadyForReconciliation(pi, root, requestedId)) return void ctx.ui.notify(`${requestedId}: no runnable descendant leaf tasks`, "info");
+						const outcome = await reconcileFeature(pi, root, requestedId, ctx);
+						return void ctx.ui.notify(`${requestedId}: ${outcome === "completed" ? "reconciliation complete" : "Needs Human"}`, outcome === "completed" ? "success" : "warning");
+					}
 				}
 				const task = taskId === requestedId ? requestedTask : JSON.parse(await runBacklog(pi, root, ["task", "view", taskId, "--json"])).task as WorkflowTask;
 				if (task.type !== "task" || !["Open", "Rework"].includes(task.status) || !task.isReady || task.readiness?.isBlocked || task.assignees?.includes("@human") || task.subtasks.length) throw new Error(`${taskId} is not a ready, unblocked leaf task.`);
@@ -649,7 +693,8 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 					const evidence = reviewEvidence(review.output);
 					await persistReview(pi, root, task, evidence);
 					if (evidence.verdict === "approved") {
-						ctx.ui.notify(`${task.id}: In Review`, "success");
+						await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Done"]);
+						ctx.ui.notify(`${task.id}: Done`, "success");
 						if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
 						return;
 					}

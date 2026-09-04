@@ -162,8 +162,8 @@ test("complete_transition is worker-only, validates outcomes, and terminates", a
 	assert.equal(result.terminate, true);
 });
 
-test("worker prompts require ticket evidence or read-only review and a terminating outcome", async () => {
-	const { implementerPrompt, reviewerPrompt } = await import(`${pathToFileURL(path.join(packageRoot, "worker-runner.ts")).href}?t=${Date.now()}`);
+test("worker prompts require ticket evidence, review, reconciliation, and a terminating outcome", async () => {
+	const { implementerPrompt, reviewerPrompt, reconcilerPrompt } = await import(`${pathToFileURL(path.join(packageRoot, "worker-runner.ts")).href}?t=${Date.now()}`);
 	const prompt = implementerPrompt("TASK-42");
 	assert.match(prompt, /task_view/);
 	assert.match(prompt, /project instructions/);
@@ -178,6 +178,11 @@ test("worker prompts require ticket evidence or read-only review and a terminati
 	assert.match(review, /"verdict": "approved"\|"rework"/);
 	assert.match(review, /Do not modify files, Backlog\.md, or Git state/);
 	assert.match(review, /complete_transition exactly once as your final action/);
+	const reconciliation = reconcilerPrompt("TASK-42");
+	assert.match(reconciliation, /reconciliation worker/);
+	assert.match(reconciliation, /parent acceptance criteria.*documentation.*technical decisions.*related Backlog\.md tickets/is);
+	assert.match(reconciliation, /Do not modify files, Backlog\.md, or Git state/);
+	assert.match(reconciliation, /complete_transition exactly once as your final action/);
 });
 
 test("child Pi runner inherits project context and reports bounded, malformed, and cancelled runs", async (t) => {
@@ -345,7 +350,7 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	const taskId = createdId(await cli(project, "task", "create", "Implement", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
 	await command.handler(taskId, commandContext(project).ctx);
 	const task = JSON.parse(await cli(project, "task", "view", taskId, "--json")).task;
-	assert.equal(task.status, "In Review");
+	assert.equal(task.status, "Done");
 	assert.equal(task.implementationPlan, "- Change code");
 	assert.match(task.implementationNotes, /Works/);
 	assert.match(task.implementationNotes, /node --test/);
@@ -423,9 +428,12 @@ test("implement-run processes every ready descendant leaf for a feature", async 
 	await run("git", ["init", "--quiet"], { cwd: project });
 	await cli(project, "init", "Feature contract", "--defaults", "--integration-mode", "none");
 	await writeFile(fakePi, [
-		'const review = process.argv.at(-1).includes("read-only reviewer");',
+		'const prompt = process.argv.at(-1);',
+		'const review = prompt.includes("read-only reviewer");',
+		'const reconciliation = prompt.includes("reconciliation worker");',
 		'const evidence = { summary: "Implemented", plan: ["Change code"], modifiedFiles: ["index.ts"], acceptanceCriteria: [{ criterion: "Works", status: "met", evidence: "Checked" }], checks: [{ command: "node --test", status: "passed", evidence: "ok" }], documentation: { impact: "none", evidence: "No docs" }, blockers: [] };',
-		'const output = JSON.stringify(review ? { verdict: "approved", findings: [] } : evidence);',
+		'const reconciliationEvidence = { summary: "Reconciled", checks: ["parent acceptance criteria", "documentation", "technical decisions", "related tickets"].map((area) => ({ area, status: "passed", evidence: "Checked" })) };',
+		'const output = JSON.stringify(reconciliation ? reconciliationEvidence : review ? { verdict: "approved", findings: [] } : evidence);',
 		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: output }], usage: {} } }));',
 		'console.log(JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "complete_transition", details: { outcome: "completed" }, isError: false, content: [] } }));',
 	].join("\n"));
@@ -454,9 +462,37 @@ test("implement-run processes every ready descendant leaf for a feature", async 
 	await command.handler("", commandContext(project).ctx);
 	assert.equal(JSON.parse(await cli(project, "task", "view", reworkId, "--json")).task.status, "Rework");
 	await command.handler("", commandContext(project, async () => true, async () => undefined, async (_label, options) => options.find((option) => option.startsWith(`${featureId}:`))).ctx);
-	for (const [id, status] of [[blockedId, "Blocked"], [waitingId, "Open"], [humanId, "Open"], [reworkId, "In Review"], [priorityId, "In Review"], [runnableId, "In Review"], [laterRunnableId, "In Review"]]) {
+	for (const [id, status] of [[blockedId, "Blocked"], [waitingId, "Open"], [humanId, "Open"], [reworkId, "Done"], [priorityId, "Done"], [runnableId, "Done"], [laterRunnableId, "Done"], [featureId, "Open"]]) {
 		assert.equal(JSON.parse(await cli(project, "task", "view", id, "--json")).task.status, status);
 	}
+});
+
+test("implement-run reconciles a feature only after every descendant leaf is Done", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-reconcile-feature-"));
+	const fakePi = path.join(project, "fake-pi.mjs");
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Reconcile contract", "--defaults", "--integration-mode", "none");
+	await writeFile(fakePi, [
+		'const output = JSON.stringify({ summary: "Reconciled", checks: ["parent acceptance criteria", "documentation", "technical decisions", "related tickets"].map((area) => ({ area, status: "passed", evidence: "Checked" })) });',
+		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: output }], usage: {} } }));',
+		'console.log(JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "complete_transition", details: { outcome: "completed" }, isError: false, content: [] } }));',
+	].join("\n"));
+	const previousScript = process.argv[1];
+	process.argv[1] = fakePi;
+	t.after(() => { process.argv[1] = previousScript; });
+
+	const { commands } = await workflowHarness();
+	await commands.get("workflow-init").handler("", commandContext(project).ctx);
+	const featureId = createdId(await cli(project, "task", "create", "Feature", "--type", "feature", "--priority", "Medium", "--ac", "Feature works"), "task");
+	const leafId = createdId(await cli(project, "task", "create", "Leaf", "--type", "task", "--priority", "Medium", "--parent", featureId, "--ac", "Leaf works"), "task");
+	await cli(project, "task", "edit", leafId, "--status", "Done");
+	await commands.get("implement-run").handler(featureId, commandContext(project).ctx);
+	const feature = JSON.parse(await cli(project, "task", "view", featureId, "--json")).task;
+	assert.equal(feature.status, "In Review");
+	assert.equal(feature.comments.at(-1).author, "@reconciler");
+	assert.match(feature.comments.at(-1).body, /parent acceptance criteria/);
 });
 
 test("feature selection follows hierarchy, dependency, priority, and resume JSON fixtures", async () => {

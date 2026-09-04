@@ -8,7 +8,7 @@ ADRs for durable repo decisions.
 
 ## Index
 - [2026-09-03 — Use a package-local Backlog.md CLI](2026-09-03-use-package-local-backlog-cli.md) — accepted.
-- [2026-09-03 — Adopt a Backlog.md workflow contract](2026-09-03-adopt-backlog-workflow-contract.md) — accepted.
+- [2026-09-03 — Adopt a Backlog.md workflow contract](2026-09-03-adopt-backlog-workflow-contract.md) — accepted; governs leaf completion and feature reconciliation.
 
 ## Rules / workflow
 - Store ADRs in this directory.
