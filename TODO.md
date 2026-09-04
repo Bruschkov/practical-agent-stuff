@@ -14,13 +14,13 @@
 - [x] Implement `/refine <idea-or-draft-id>` as an interactive main-session workflow that creates or resumes a draft and keeps accepted decisions in Backlog.md.
 - [x] Make refinement propose intent, acceptance criteria, feature/sub-feature/task decomposition, priorities, and dependencies; publish tasks only after explicit user approval.
 - [x] Integrate optionally with `backlog-handoff`: include incoming handoffs in no-argument `/refine` selection, report inbox count/integration status, preserve handoff metadata, and move a handoff to `processed/` only after successful ticket publication.
-- [ ] Expose `backlog-handoff` to implementation workers when installed so discovered cross-project work can be routed without making either extension a hard dependency.
 - [ ] Add refinement contract tests covering draft creation/resume, the approval boundary, handoff discovery/publication, and the handoff file-format contract.
 
 ## Phase 3 — One-ticket implementation
 
 - [ ] Add a worker-only terminating `complete_transition` tool with validated outcomes: `completed`, `needs_human`, `blocked`, and `failed`.
 - [ ] Add an isolated child-Pi runner based on Pi's subagent pattern: JSON event parsing, project cwd/context inheritance, cancellation, bounded output, usage capture, and failure reporting.
+- [ ] Bonus: inherit installed `backlog-handoff` into implementation workers so they can route discovered cross-project work.
 - [ ] Add the implementer worker prompt: read the ticket and project instructions, implement minimally, run required checks, assess documentation impact, and return structured evidence.
 - [ ] Implement `/implement-run <task-id>` for one ready, unblocked leaf task and persist its plan, notes, modified files, acceptance-criteria progress, and final summary through Backlog.md.
 - [ ] Add an end-to-end test with fake Pi output proving successful completion, malformed-result failure, and blocked-task refusal.

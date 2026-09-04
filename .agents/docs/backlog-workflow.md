@@ -29,6 +29,10 @@
 - The main session reads a resumed draft, persists accepted decisions, and proposes intent, concrete acceptance criteria, and a feature/sub-feature/task hierarchy with priorities and dependencies. It must not create or promote tasks while approval remains pending.
 - After the user explicitly approves the displayed proposal, use `refinement_publish` with the draft ID and matching `proposedTasks`. It requires final interactive confirmation, validates proposal-local hierarchy/dependencies, creates tickets with explicit or `Medium` priority, records approval and published IDs in the draft, then archives it. Only then does it move a linked handoff to `.backlog-handoff/processed/`; a move failure leaves the source in the inbox and reports it. Declining confirmation leaves the draft and handoff pending and creates no tickets.
 
+## Implementation workers
+- Core child-Pi runner and `/implement-run` behavior must work without `backlog-handoff`.
+- As a bonus after the runner exists, inherit an installed `backlog-handoff` extension into workers so they can route discovered cross-project work. Do not add a dependency, detection, adapter, or dedicated test for it.
+
 ## Workflow configuration
 - The required types, statuses, priorities, refinement approval boundary, HITL handling, and Definition of Done are defined by [Adopt a Backlog.md workflow contract](decisions/2026-09-03-adopt-backlog-workflow-contract.md).
 - `/workflow-init` is interactive and requires Git. It operates at the Git top level, initializes an absent Backlog.md project only after confirmation, and reconfirms before changing an existing configuration.
