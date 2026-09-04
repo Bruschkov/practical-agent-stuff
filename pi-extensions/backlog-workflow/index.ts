@@ -26,8 +26,18 @@ const definitionOfDone = [
 ];
 const operations = [
 	"task_list", "task_view", "task_create", "task_edit", "task_archive",
-	"draft_list", "draft_view", "draft_create", "draft_edit", "draft_archive", "draft_promote",
+	"draft_list", "draft_view", "draft_create", "draft_edit", "draft_archive", "draft_promote", "refinement_publish",
 ] as const;
+const PROPOSED_TASK_SCHEMA = Type.Object({
+	key: Type.String({ minLength: 1, description: "Unique proposal-local task key." }),
+	title: Type.String({ minLength: 1, description: "Ticket title." }),
+	description: Type.String({ minLength: 1, description: "Ticket description." }),
+	type: Type.String({ enum: types, description: "Workflow task type." }),
+	priority: Type.Optional(Type.String({ enum: priorities, description: "Defaults to Medium." })),
+	acceptanceCriteria: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Concrete completion checks." }),
+	parentKey: Type.Optional(Type.String({ minLength: 1, description: "Proposal-local parent key." })),
+	dependsOn: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Proposal-local prerequisite keys." })),
+});
 const BACKLOG_SCHEMA = Type.Object({
 	operation: Type.String({ enum: operations, description: "Backlog.md operation to run." }),
 	id: Type.Optional(Type.String({ description: "Task or draft ID for view, edit, archive, or promote." })),
@@ -45,8 +55,10 @@ const BACKLOG_SCHEMA = Type.Object({
 	commentAuthor: Type.Optional(Type.String({ description: "Author for an appended comment." })),
 	ready: Type.Optional(Type.Boolean({ description: "Only list ready tasks." })),
 	limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Maximum listed tasks." })),
+	proposedTasks: Type.Optional(Type.Array(PROPOSED_TASK_SCHEMA, { minItems: 1, description: "Approved refinement tickets to publish." })),
 });
 type BacklogInput = Static<typeof BACKLOG_SCHEMA>;
+type ProposedTask = Static<typeof PROPOSED_TASK_SCHEMA>;
 
 function yamlValue(value: string) {
 	return JSON.stringify(value);
@@ -191,6 +203,64 @@ async function runBacklog(pi: ExtensionAPI, root: string, args: string[]) {
 	return output;
 }
 
+function validateProposal(tasks: ProposedTask[]) {
+	const byKey = new Map(tasks.map((task) => [task.key, task]));
+	if (byKey.size !== tasks.length) throw new Error("Proposed task keys must be unique.");
+	for (const task of tasks) {
+		const parent = task.parentKey && byKey.get(task.parentKey);
+		if (task.parentKey && !parent) throw new Error(`Unknown parentKey '${task.parentKey}' for '${task.key}'.`);
+		if (task.type === "feature" ? task.parentKey : !task.parentKey) throw new Error(`${task.type} '${task.key}' has an invalid parent.`);
+		if (parent && !((task.type === "sub-feature" && parent.type === "feature") || (task.type === "task" && ["feature", "sub-feature"].includes(parent.type)))) {
+			throw new Error(`'${task.key}' has an invalid ${task.type} parent.`);
+		}
+		for (const dependency of task.dependsOn ?? []) {
+			if (!byKey.has(dependency) || dependency === task.key) throw new Error(`Invalid dependency '${dependency}' for '${task.key}'.`);
+		}
+	}
+	return byKey;
+}
+
+async function publishRefinement(pi: ExtensionAPI, root: string, input: BacklogInput, ctx: any) {
+	const draftId = required(input.id, "id");
+	const tasks = input.proposedTasks;
+	if (!tasks?.length) throw new Error("'proposedTasks' is required for refinement_publish.");
+	if (!ctx.hasUI) throw new Error("refinement_publish requires interactive mode.");
+	validateProposal(tasks);
+	await runBacklog(pi, root, ["draft", "view", draftId, "--plain"]);
+	if (!await ctx.ui.confirm("Publish refinement?", `Draft: ${draftId}\nCreate ${tasks.length} proposed ticket${tasks.length === 1 ? "" : "s"} and archive the draft?`)) {
+		return "Publication cancelled; draft remains pending.";
+	}
+
+	const ids = new Map<string, string>();
+	try {
+		while (ids.size < tasks.length) {
+			let created = false;
+			for (const task of tasks) {
+				if (ids.has(task.key) || (task.parentKey && !ids.has(task.parentKey))) continue;
+				const args = ["task", "create", task.title, "--description", task.description, "--type", task.type, "--priority", task.priority ?? "Medium"];
+				if (task.parentKey) args.push("--parent", ids.get(task.parentKey)!);
+				append(args, "--ac", task.acceptanceCriteria);
+				const output = await runBacklog(pi, root, args);
+				const match = output.match(/Created task (\S+)/);
+				if (!match) throw new Error(`Could not determine the created task ID: ${output}`);
+				ids.set(task.key, match[1]);
+				created = true;
+			}
+			if (!created) throw new Error("Proposed task parents form a cycle.");
+		}
+		for (const task of tasks) {
+			if (task.dependsOn?.length) await runBacklog(pi, root, ["task", "edit", ids.get(task.key)!, "--depends-on", ...task.dependsOn.map((key) => ids.get(key)!)]);
+		}
+		const published = tasks.map((task) => `- ${task.key}: ${ids.get(task.key)}`).join("\n");
+		await runBacklog(pi, root, ["draft", "edit", draftId, "--comment", `Approval: approved\n\nPublished tickets:\n${published}`, "--comment-author", "@human"]);
+		await runBacklog(pi, root, ["draft", "archive", draftId]);
+		return `Published and archived ${draftId}: ${[...ids.values()].join(", ")}`;
+	} catch (error) {
+		if (ids.size) await runBacklog(pi, root, ["draft", "edit", draftId, "--comment", `Publication failed after creating: ${[...ids.values()].join(", ")}`, "--comment-author", "@workflow"]);
+		throw error;
+	}
+}
+
 export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 	pi.registerCommand("workflow-init", {
 		description: "Initialize or reconcile the Backlog.md workflow configuration",
@@ -267,7 +337,7 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				}
 
 				ctx.ui.notify(`${created ? "Created" : "Resuming"} refinement draft ${draftId}`, "success");
-				pi.sendUserMessage(`Refine Backlog.md draft ${draftId} in this main session. ${created ? "Start from its recorded intent." : "Read the existing draft first."} Ask focused questions, and use the backlog tool to record every accepted decision in the draft's description under "Accepted decisions". Keep \`Approval: pending\`; do not create or promote tasks yet.`);
+				pi.sendUserMessage(`Refine Backlog.md draft ${draftId} in this main session. ${created ? "Start from its recorded intent." : "Read the existing draft first."} Ask focused questions, then propose intent, concrete acceptance criteria, and a feature/sub-feature/task hierarchy with priorities and dependencies. Record every accepted decision and the full proposal in the draft's description under "Accepted decisions". Keep \`Approval: pending\` and do not create or promote tasks. Only after the user explicitly approves the displayed proposal, call backlog with \`operation: "refinement_publish"\`, the draft ID, and matching \`proposedTasks\`; it will ask final confirmation, publish tickets, record their IDs, and archive the draft.`);
 			} catch (error: any) {
 				ctx.ui.notify(`refine failed: ${error?.message ?? String(error)}`, "error");
 			}
@@ -283,8 +353,12 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 		parameters: BACKLOG_SCHEMA,
 		async execute(_toolCallId, input: BacklogInput, signal, _onUpdate, ctx) {
 			const root = await projectRoot(pi, ctx.cwd);
-			const args = backlogArgs(input);
 			const run = async () => {
+				if (input.operation === "refinement_publish") {
+					const text = await publishRefinement(pi, root, input, ctx);
+					return { content: [{ type: "text" as const, text }], details: { operation: input.operation, args: [], truncated: false } };
+				}
+				const args = backlogArgs(input);
 				const result = await pi.exec(cli, args, { cwd: root, signal, timeout: isWrite(input.operation) ? 30_000 : 10_000 });
 				const output = `${result.stdout}${result.stderr ? `${result.stdout ? "\n" : ""}${result.stderr}` : ""}`;
 				const bounded = boundedOutput(output);

@@ -17,14 +17,15 @@
 - Backlog.md provides `--json` for task reads; draft reads use `--plain`.
 
 ## Backlog tool
-- The extension registers one `backlog` tool. Its `operation` is one of `task_list`, `task_view`, `task_create`, `task_edit`, `task_archive`, `draft_list`, `draft_view`, `draft_create`, `draft_edit`, `draft_archive`, or `draft_promote`.
-- Use named fields, never raw CLI arguments: `id`, `title`, `description`, `status`, `priority`, `type`, `parent`, `dependsOn`, `assignees`, `labels`, `acceptanceCriteria`, `comment`, `commentAuthor`, `ready`, and `limit` as applicable.
+- The extension registers one `backlog` tool. Its `operation` is one of `task_list`, `task_view`, `task_create`, `task_edit`, `task_archive`, `draft_list`, `draft_view`, `draft_create`, `draft_edit`, `draft_archive`, `draft_promote`, or `refinement_publish`.
+- Use named fields, never raw CLI arguments: `id`, `title`, `description`, `status`, `priority`, `type`, `parent`, `dependsOn`, `assignees`, `labels`, `acceptanceCriteria`, `comment`, `commentAuthor`, `ready`, `limit`, and `proposedTasks` as applicable.
 - Task reads request CLI JSON; drafts use `--plain`. Tool output is capped at 2,000 lines or 50 KB. Write operations are queued on the project's `backlog/` directory; do not bypass the tool for Backlog.md mutations.
 - `task_create` supplies `Medium` when `priority` is absent. An edit must provide a changed field, and `commentAuthor` requires `comment`.
 
 ## Refinement
 - `/refine <idea-or-draft-id>` requires interactive mode. An idea creates a draft with its intent, an `Accepted decisions` section, and `Approval: pending`; a `DRAFT-<number>` argument validates and resumes that draft.
-- The command sends the refinement to the main Pi session. The session must read the draft first when resuming and persist each accepted decision through the `backlog` tool. It must not create or promote tasks while approval remains pending.
+- The main session reads a resumed draft, persists accepted decisions, and proposes intent, concrete acceptance criteria, and a feature/sub-feature/task hierarchy with priorities and dependencies. It must not create or promote tasks while approval remains pending.
+- After the user explicitly approves the displayed proposal, use `refinement_publish` with the draft ID and matching `proposedTasks`. It requires final interactive confirmation, validates proposal-local hierarchy/dependencies, creates tickets with explicit or `Medium` priority, records approval and published IDs in the draft, then archives it. Declining confirmation leaves the draft pending and creates no tickets.
 
 ## Workflow configuration
 - The required types, statuses, priorities, refinement approval boundary, HITL handling, and Definition of Done are defined by [Adopt a Backlog.md workflow contract](decisions/2026-09-03-adopt-backlog-workflow-contract.md).
@@ -34,7 +35,7 @@
 
 ## Verification
 - `npm ci --prefix pi-extensions/backlog-workflow && node --test tests/pi-extensions/backlog-workflow/contract.test.mjs`
-- The contract test covers the package-local CLI, the structured `backlog` tool (including bounded output and serialized writes), `/refine` draft creation/resume and main-session handoff, initialization, idempotent reruns, required configuration validation, Git refusal, and declined reconciliation.
+- The contract test covers the package-local CLI, the structured `backlog` tool (including bounded output and serialized writes), `/refine` draft creation/resume, proposal handoff, approval/refusal, hierarchy/dependency publication and archival, initialization, idempotent reruns, required configuration validation, Git refusal, and declined reconciliation.
 
 ## Related
 - [Decision: Use package-local Backlog.md CLI](decisions/2026-09-03-use-package-local-backlog-cli.md)

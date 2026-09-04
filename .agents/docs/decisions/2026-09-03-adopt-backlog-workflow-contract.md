@@ -70,7 +70,7 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 
 ## Implementation Plan
 
-- **Affected paths**: `pi-extensions/backlog-workflow/index.ts`, `tests/pi-extensions/backlog-workflow/contract.test.mjs`, and the Backlog.md config created by the future `/workflow-init` command.
+- **Affected paths**: `pi-extensions/backlog-workflow/index.ts`, `tests/pi-extensions/backlog-workflow/contract.test.mjs`, and the Backlog.md config created by `/workflow-init`.
 - **Dependencies**: retain `backlog.md` `^1.4.0`; add none.
 - **Patterns to follow**: invoke the package-local CLI and consume its JSON boundary, per [the package-local CLI ADR](2026-09-03-use-package-local-backlog-cli.md); keep refinement decisions in Backlog.md drafts.
 - **Patterns to avoid**: global Backlog.md executables, direct Backlog.md API imports, publishing before explicit approval, worker-controlled status writes, and ad-hoc task types or statuses.
@@ -78,10 +78,10 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 
 ### Verification
 
-- [ ] `/workflow-init` creates or reconciles a Backlog.md configuration containing exactly the specified task types, statuses, and priorities only after required confirmation; workflow-created tickets without a chosen priority receive explicit `Medium`.
-- [ ] Refinement contract tests prove that unapproved drafts create no tasks and approved drafts record published ticket IDs before archiving.
+- [x] `/workflow-init` creates or reconciles a Backlog.md configuration containing exactly the specified task types, statuses, and priorities only after required confirmation; workflow-created tickets without a chosen priority receive explicit `Medium`.
+- [x] Refinement contract tests prove that unapproved drafts create no tasks and approved drafts record published ticket IDs before archiving.
 - [ ] Implementation contract tests prove `Needs Human` assigns `@human`, blocked and human-owned tasks are not selected, rework is selected before ordinary open work, and `Done` requires persisted evidence.
-- [ ] `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs` continues to pass.
+- [x] `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs` passes.
 
 ## Alternatives Considered
 
@@ -94,3 +94,5 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 Revisit this contract if Backlog.md cannot represent the required configuration through its supported CLI, or if the package gains multiple concurrent controllers.
 
 2026-09-03: Backlog.md 1.51.0 reads `statuses`, `types`, and `priorities` through `backlog config get`, but `backlog config set` rejects those list-valued keys. `/workflow-init` must therefore update the project YAML only after confirmation and validate through the CLI. `definition_of_done` is supported in the YAML and appears as `definitionOfDone` in task JSON. Backlog.md has no configurable default priority.
+
+2026-09-04: `refinement_publish` adds the approval boundary without another extension dependency: it validates proposal-local feature/sub-feature/task parentage and dependencies, asks for final interactive confirmation, creates parents before children, applies dependencies after IDs exist, records approval and ticket IDs in the draft, then archives it. Declined confirmation leaves the draft unchanged.

@@ -13,6 +13,7 @@ Versioned coding-agent assets used selectively across projects.
 
 ## Repo Rules
 - Keep versioned source skills; do not track local `.agents/skills/` copies.
+- Read the relevant `.agents/docs/` page before changing an extension.
 
 ## Docs
 - Docs map: [`.agents/docs/README.md`](.agents/docs/README.md)

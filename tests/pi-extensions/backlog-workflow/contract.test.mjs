@@ -190,11 +190,55 @@ test("refine creates or resumes a draft and continues in the main session", asyn
 	assert.match(draft, /Approval: pending/);
 	assert.match(messages.at(-1), /draft DRAFT-1/);
 	assert.match(messages.at(-1), /main session/);
+	assert.match(messages.at(-1), /acceptance criteria.*hierarchy.*priorities.*dependencies/is);
+	assert.match(messages.at(-1), /refinement_publish/);
 
 	const resumed = commandContext(project);
 	await command.handler("DRAFT-1", resumed.ctx);
 	assert.equal(resumed.notifications.at(-1).level, "success");
 	assert.equal(((await cli(project, "draft", "list", "--plain")).match(/DRAFT-\d+/g) ?? []).length, 1);
+});
+
+test("refinement_publish requires confirmation, publishes the hierarchy, and archives its approved draft", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-publish-"));
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Publish contract", "--defaults", "--integration-mode", "none");
+	const draftId = createdId(await cli(project, "draft", "create", "Approved proposal", "--description", "Approval: pending"), "draft");
+	const calls = [];
+	const tool = await workflowToolHarness(async (command, args, options = {}) => {
+		calls.push(args);
+		try {
+			const result = await run(command, args, { cwd: options.cwd, maxBuffer: 1024 * 1024 });
+			return { ...result, code: 0, killed: false };
+		} catch (error) {
+			return { stdout: error.stdout ?? "", stderr: error.stderr ?? "", code: error.code ?? 1, killed: false };
+		}
+	});
+	const proposal = [
+		{ key: "feature", title: "Feature", description: "The outcome", type: "feature", priority: "High", acceptanceCriteria: ["Outcome works"] },
+		{ key: "setup", title: "Setup", description: "Prepare it", type: "task", parentKey: "feature", acceptanceCriteria: ["Setup works"] },
+		{ key: "finish", title: "Finish", description: "Finish it", type: "task", parentKey: "feature", dependsOn: ["setup"], acceptanceCriteria: ["Finish works"] },
+	];
+	const declined = await tool.execute("decline", { operation: "refinement_publish", id: draftId, proposedTasks: proposal }, undefined, undefined, {
+		cwd: project, hasUI: true, ui: { confirm: async () => false },
+	});
+	assert.match(declined.content[0].text, /cancelled/);
+	assert.equal(JSON.parse(await cli(project, "task", "list", "--json")).tasks.length, 0);
+
+	const published = await tool.execute("approve", { operation: "refinement_publish", id: draftId, proposedTasks: proposal }, undefined, undefined, {
+		cwd: project, hasUI: true, ui: { confirm: async () => true },
+	});
+	assert.match(published.content[0].text, /Published and archived/);
+	const tasks = JSON.parse(await cli(project, "task", "list", "--json")).tasks;
+	assert.equal(tasks.length, 3);
+	const byTitle = new Map(tasks.map((task) => [task.title, task]));
+	assert.equal(byTitle.get("Setup").parentTaskId, byTitle.get("Feature").id);
+	assert.deepEqual(JSON.parse(await cli(project, "task", "view", byTitle.get("Finish").id, "--json")).task.dependencies, [byTitle.get("Setup").id]);
+	const approvalEdit = calls.find((args) => args[0] === "draft" && args[1] === "edit" && args.some((arg) => arg.includes("Published tickets:")));
+	assert.ok(approvalEdit, "Approval and published IDs must be recorded before archiving");
+	assert.ok(calls.indexOf(approvalEdit) < calls.findIndex((args) => args[0] === "draft" && args[1] === "archive"));
 });
 
 test("workflow-init initializes and validates the required configuration idempotently", async (t) => {
