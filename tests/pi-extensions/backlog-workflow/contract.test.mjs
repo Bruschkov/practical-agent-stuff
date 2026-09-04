@@ -391,11 +391,22 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	assert.match(humanComments, /@human: ## Human response\nUse staging\./);
 
 	const deferredId = createdId(await cli(project, "task", "create", "Deferred human input", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
-	await command.handler(deferredId, commandContext(project).ctx);
+	const deferredRun = commandContext(project);
+	await command.handler(deferredId, deferredRun.ctx);
 	const deferred = JSON.parse(await cli(project, "task", "view", deferredId, "--json")).task;
 	assert.equal(deferred.status, "Needs Human");
 	assert.deepEqual(deferred.assignees, ["@human"]);
 	assert.match(deferred.comments.at(-1).body, /Response: pending/);
+	assert.ok(deferredRun.notifications.some(({ message }) => /Needs Human/.test(message)));
+
+	const { commands: restartedCommands } = await workflowHarness();
+	const restarted = commandContext(project, async () => true, async () => "Resume with staging.");
+	restarted.ctx.ui.select = async (_label, options) => options.find((option) => option.startsWith(`${deferredId}:`));
+	await restartedCommands.get("workflow-inbox").handler("", restarted.ctx);
+	const resumed = JSON.parse(await cli(project, "task", "view", deferredId, "--json")).task;
+	assert.equal(resumed.status, "Open");
+	assert.deepEqual(resumed.assignees, []);
+	assert.match(resumed.comments.at(-1).body, /Resume with staging/);
 });
 
 test("refine creates or resumes a draft and continues in the main session", async (t) => {
@@ -523,6 +534,14 @@ test("refinement_publish requires confirmation, publishes the hierarchy, and arc
 	});
 	assert.match(declined.content[0].text, /cancelled/);
 	assert.equal(JSON.parse(await cli(project, "task", "list", "--json")).tasks.length, 0);
+	assert.match(await cli(project, "draft", "view", draftId, "--plain"), /Approval: pending/);
+
+	const cancelled = await tool.execute("cancel", { operation: "refinement_publish", id: draftId, proposedTasks: proposal }, undefined, undefined, {
+		cwd: project, hasUI: true, ui: { confirm: async () => undefined },
+	});
+	assert.match(cancelled.content[0].text, /cancelled/);
+	assert.equal(JSON.parse(await cli(project, "task", "list", "--json")).tasks.length, 0);
+	assert.match(await cli(project, "draft", "view", draftId, "--plain"), /Approval: pending/);
 
 	const published = await tool.execute("approve", { operation: "refinement_publish", id: draftId, proposedTasks: proposal }, undefined, undefined, {
 		cwd: project, hasUI: true, ui: { confirm: async () => true },

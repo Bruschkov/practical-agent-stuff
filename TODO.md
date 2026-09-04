@@ -31,7 +31,7 @@
 - [x] Persist review findings and rerun the implementer on required rework; cap repeated rework and pause with diagnostics.
 - [x] On `needs_human`, persist the request and assign `@human` before opening Pi UI; persist answers or leave deferred requests resumable.
 - [x] Add `/workflow-inbox` to list and resolve pending human requests.
-- [ ] Test approval, rejection, deferred input, cancellation, and restart behavior.
+- [x] Test approval, rejection, deferred input, cancellation, and restart behavior.
 
 ## Phase 5 — Feature burn-down
 
