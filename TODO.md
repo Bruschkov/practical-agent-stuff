@@ -52,4 +52,9 @@
 
 ## Phase 7 — Documentation
 
-- [ ] Refine with the user the documentation scope: architecture, intended workflows, commands, and best practices.
+- [x] Refine with the user the documentation scope: architecture, intended workflows, commands, and best practices. End users first; maintainer material remains in agent docs.
+- [x] Add a concise end-user guide covering philosophy, installation, usage, commands, and architecture.
+
+## Future feature ideas
+
+- [ ] Let no-argument `/implement-run` recommend a feature and its next runnable leaf with a short rationale, while preserving explicit user selection.

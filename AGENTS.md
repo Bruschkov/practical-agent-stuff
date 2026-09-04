@@ -17,6 +17,7 @@ Versioned coding-agent assets used selectively across projects.
 - Read the relevant `.agents/docs/` page before changing an extension or its contract tests.
 - Keep optional integrations non-blocking; do not add hard dependencies solely for them.
 - Keep child-Pi extension discovery enabled unless isolation is explicitly required.
+- Prioritize end-user documentation; keep maintainer-only workflow detail in `.agents/docs/`.
 
 ## Docs
 - Docs map: [`.agents/docs/README.md`](.agents/docs/README.md)

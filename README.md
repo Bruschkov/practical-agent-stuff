@@ -13,6 +13,7 @@ Not meant as one bulk-installable package. Pieces used selectively.
 - `skills/writing-agents-md/` — skill for writing/reviewing `AGENTS.md`
 - `skills/agent-docs/` — skill for initializing/maintaining `.agents/docs/` and ADR placement
 - `pi-extensions/backlog-handoff/` — Pi extension for backlog handoff workflow
+- [`pi-extensions/backlog-workflow/`](pi-extensions/backlog-workflow/README.md) — refine, implement, review, and approve Backlog.md work in Pi
 - `opencode-plugins/backlog-handoff/` — OpenCode plugin port of backlog handoff workflow
 - `prompts/` — prompt templates tracked in git
 
