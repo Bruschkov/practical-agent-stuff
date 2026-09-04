@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { access, mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, realpath, rm, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
@@ -153,6 +153,47 @@ test("complete_transition is worker-only, validates outcomes, and terminates", a
 	const result = await tool.execute("complete", { outcome: "completed" });
 	assert.deepEqual(result.details, { outcome: "completed" });
 	assert.equal(result.terminate, true);
+});
+
+test("child Pi runner inherits project context and reports bounded, malformed, and cancelled runs", async (t) => {
+	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-worker-"));
+	const fakePi = path.join(project, "fake-pi.mjs");
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await writeFile(fakePi, [
+		'import { writeFileSync } from "node:fs";',
+		'import path from "node:path";',
+		'const prompt = process.argv.at(-1);',
+		'writeFileSync(path.join(process.cwd(), "worker-invocation.json"), JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), worker: process.env.PI_BACKLOG_WORKFLOW_WORKER }));',
+		'if (prompt === "wait") setInterval(() => {}, 1_000);',
+		'else {',
+		'  const output = prompt === "large" ? "line\\n".repeat(2_100) : "implemented";',
+		'  console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: output }], usage: { input: 2, output: 3, cacheRead: 4, cacheWrite: 5, totalTokens: 14, cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 } } } }));',
+		'  if (prompt !== "missing") console.log(JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "complete_transition", details: { outcome: "completed" }, isError: false, content: [] } }));',
+		'}',
+	].join("\n"));
+	const previousScript = process.argv[1];
+	process.argv[1] = fakePi;
+	t.after(() => { process.argv[1] = previousScript; });
+	const { runChildPi } = await import(`${pathToFileURL(path.join(packageRoot, "worker-runner.ts")).href}?t=${Date.now()}`);
+
+	const completed = await runChildPi({ cwd: project, prompt: "large", model: { provider: "test", id: "model" }, thinkingLevel: "high" });
+	assert.equal(completed.outcome, "completed");
+	assert.equal(completed.failure, undefined);
+	assert.match(completed.output, /Output truncated/);
+	assert.deepEqual(completed.usage, { input: 2, output: 3, cacheRead: 4, cacheWrite: 5, totalTokens: 14, cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 } });
+	assert.deepEqual(JSON.parse(await readFile(path.join(project, "worker-invocation.json"), "utf8")), {
+		args: ["--mode", "json", "-p", "--no-session", "--extension", path.join(packageRoot, "index.ts"), "--model", "test/model", "--thinking", "high", "--", "large"],
+		cwd: await realpath(project),
+		worker: "1",
+	});
+
+	const malformed = await runChildPi({ cwd: project, prompt: "missing" });
+	assert.match(malformed.failure, /without complete_transition/);
+	const controller = new AbortController();
+	setTimeout(() => controller.abort(), 20);
+	const cancelled = await runChildPi({ cwd: project, prompt: "wait" }, controller.signal);
+	assert.equal(cancelled.cancelled, true);
+	assert.equal(cancelled.failure, "Worker cancelled.");
 });
 
 test("backlog tool uses structured operations, bounded output, and serialized writes", async (t) => {

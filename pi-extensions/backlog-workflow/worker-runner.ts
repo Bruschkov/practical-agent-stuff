@@ -1,0 +1,136 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from "@earendil-works/pi-coding-agent";
+
+const extensionPath = fileURLToPath(new URL("./index.ts", import.meta.url));
+const outcomes = ["completed", "needs_human", "blocked", "failed"] as const;
+
+type WorkerOutcome = typeof outcomes[number];
+type WorkerUsage = {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	totalTokens: number;
+	cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+};
+
+export type ChildPiRequest = {
+	cwd: string;
+	prompt: string;
+	model?: { provider: string; id: string };
+	thinkingLevel?: string;
+};
+
+export type ChildPiResult = {
+	exitCode: number;
+	cancelled: boolean;
+	outcome?: WorkerOutcome;
+	output: string;
+	stderr: string;
+	usage: WorkerUsage;
+	failure?: string;
+};
+
+function invocation() {
+	const script = process.argv[1];
+	if (script && !script.startsWith("/$bunfs/root/") && existsSync(script)) return { command: process.execPath, args: [script] };
+	return /^(node|bun)(\.exe)?$/i.test(path.basename(process.execPath)) ? { command: "pi", args: [] } : { command: process.execPath, args: [] };
+}
+
+function text(content: unknown) {
+	return Array.isArray(content)
+		? content.filter((part): part is { type: "text"; text: string } => !!part && typeof part === "object" && (part as any).type === "text" && typeof (part as any).text === "string").map((part) => part.text).join("\n").trim()
+		: "";
+}
+
+function bounded(output: string) {
+	const result = truncateHead(output, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES });
+	return result.truncated
+		? `${result.content}\n\n[Output truncated: ${result.outputLines} of ${result.totalLines} lines (${formatSize(result.outputBytes)} of ${formatSize(result.totalBytes)}).]`
+		: result.content;
+}
+
+function usage() {
+	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+}
+
+function addUsage(total: WorkerUsage, value: any) {
+	for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) total[key] += Number(value?.[key]) || 0;
+	total.totalTokens += Number(value?.totalTokens) || 0;
+	for (const key of ["input", "output", "cacheRead", "cacheWrite", "total"] as const) total.cost[key] += Number(value?.cost?.[key]) || 0;
+}
+
+export async function runChildPi({ cwd, prompt, model, thinkingLevel }: ChildPiRequest, signal?: AbortSignal): Promise<ChildPiResult> {
+	const child = invocation();
+	const args = [...child.args, "--mode", "json", "-p", "--no-session", "--extension", extensionPath];
+	if (model) args.push("--model", `${model.provider}/${model.id}`);
+	if (thinkingLevel) args.push("--thinking", thinkingLevel);
+	args.push("--", prompt);
+
+	const result = await new Promise<ChildPiResult>((resolve) => {
+		const totalUsage = usage();
+		let stderr = "";
+		let lastOutput = "";
+		let outcome: WorkerOutcome | undefined;
+		let completionError: string | undefined;
+		let cancelled = false;
+		let buffer = "";
+		let killTimer: ReturnType<typeof setTimeout> | undefined;
+		let settled = false;
+		const finish = (exitCode: number, failure?: string) => {
+			if (settled) return;
+			settled = true;
+			if (killTimer) clearTimeout(killTimer);
+			signal?.removeEventListener("abort", abort);
+			resolve({ exitCode, cancelled, outcome, output: bounded(lastOutput), stderr: bounded(stderr), usage: totalUsage, failure });
+		};
+		const proc = spawn(child.command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PI_BACKLOG_WORKFLOW_WORKER: "1" } });
+		const abort = () => {
+			cancelled = true;
+			proc.kill("SIGTERM");
+			killTimer = setTimeout(() => proc.kill("SIGKILL"), 5_000);
+		};
+		const parse = (line: string) => {
+			if (!line.trim()) return;
+			try {
+				const event = JSON.parse(line);
+				const message = event.type === "message_end" ? event.message : undefined;
+				if (message?.role === "assistant") {
+					const value = text(message.content);
+					if (value) lastOutput = value;
+					addUsage(totalUsage, message.usage);
+				}
+				if (message?.role === "toolResult" && message.toolName === "complete_transition") {
+					const value = message.details?.outcome;
+					if ((outcomes as readonly string[]).includes(value)) outcome = value;
+					else completionError = "complete_transition returned an invalid outcome.";
+					if (message.isError) completionError = text(message.content) || "complete_transition failed.";
+				}
+			} catch {
+				// Pi may write non-JSON diagnostics; stderr captures fatal diagnostics.
+			}
+		};
+		proc.stdout.on("data", (data) => {
+			buffer += data;
+			const lines = buffer.split("\n");
+			buffer = lines.pop() ?? "";
+			for (const line of lines) parse(line);
+		});
+		proc.stderr.on("data", (data) => { stderr += data; });
+		proc.on("error", (error) => finish(1, `Could not start Pi worker: ${error.message}`));
+		proc.on("close", (code) => {
+			if (buffer.trim()) parse(buffer);
+			if (cancelled) return finish(code ?? 1, "Worker cancelled.");
+			if (code !== 0) return finish(code ?? 1, `Pi worker exited with code ${code ?? 1}.`);
+			if (completionError) return finish(0, completionError);
+			if (!outcome) return finish(0, "Pi worker ended without complete_transition.");
+			finish(0);
+		});
+		if (signal?.aborted) abort();
+		else signal?.addEventListener("abort", abort, { once: true });
+	});
+	return result;
+}
