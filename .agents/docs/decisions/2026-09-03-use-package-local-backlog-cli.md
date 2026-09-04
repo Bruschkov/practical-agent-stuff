@@ -27,7 +27,7 @@ Non-goals: supporting Backlog.md 2.x, managing a system-wide Backlog.md installa
 ## Implementation Plan
 
 - **Affected paths**: `pi-extensions/backlog-workflow/package.json`, `pi-extensions/backlog-workflow/package-lock.json`, `pi-extensions/backlog-workflow/index.ts`, and `tests/pi-extensions/backlog-workflow/contract.test.mjs`.
-- **Dependencies**: `backlog.md` `^1.4.0`; `@earendil-works/pi-coding-agent` remains a `*` peer dependency.
+- **Dependencies**: `backlog.md` `^1.4.0`; `@earendil-works/pi-coding-agent` and `typebox` are `*` peer dependencies.
 - **Patterns to follow**: Pi package manifest declares `index.ts`; future wrapper code calls the CLI with `--json` and parses the command result.
 - **Patterns to avoid**: global executable lookup, direct Backlog.md API imports, and a strict exact dependency range.
 
@@ -36,6 +36,7 @@ Non-goals: supporting Backlog.md 2.x, managing a system-wide Backlog.md installa
 - [x] Package manifest declares `backlog.md` `^1.4.0` and `index.ts` as its Pi extension.
 - [x] `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs` passes.
 - [x] The contract test invokes the package-local CLI in a temporary Git repository and verifies config lookup, task/draft CRUD, parent/dependency data, comments, assignments, and repeatable task JSON.
+- [x] One structured `backlog` Pi tool invokes the package-local binary, limits output, and serializes writes; its contract test passes.
 
 ## Alternatives Considered
 
@@ -46,5 +47,7 @@ Non-goals: supporting Backlog.md 2.x, managing a system-wide Backlog.md installa
 ## More Information
 
 2026-09-03: Backlog.md exposes versioned JSON for `task list` and `task view`; draft reads use plain text. The contract covers the supported JSON boundary rather than parsing human-readable output.
+
+2026-09-04: The package exposes one structured `backlog` Pi tool rather than arbitrary CLI arguments. It uses the package-local binary, caps tool output at Pi's 2,000-line/50 KB limit, and serializes writes through the project's `backlog/` directory. `typebox` is a Pi peer dependency for its parameter schema.
 
 See [Backlog Workflow Package](../backlog-workflow.md).

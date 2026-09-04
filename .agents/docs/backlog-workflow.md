@@ -8,13 +8,19 @@
 - `backlog.md` is a package-local runtime dependency with the compatible range `^1.4.0`; use its locally installed CLI, not a Homebrew or other global installation.
 - The lockfile records the resolved CLI and peer-dependency graph required by `npm ci`. Do not change the supported range without validating the CLI contract.
 - For source-local development, run `npm ci --prefix pi-extensions/backlog-workflow` before loading it. Use `npm install --prefix pi-extensions/backlog-workflow` only to resynchronize the lockfile after a manifest change, then verify with `npm ci`.
-- Future workflow code must consume the Backlog.md CLI's JSON interface, not its internal TypeScript API.
+- Future workflow code must use the package-local `backlog` Pi tool, not shell commands or Backlog.md internals. The tool has structured task/draft operations; task reads use the CLI JSON interface and draft reads use plain text.
 
 ## CLI contract
 - Source-local test setup: `npm ci --prefix pi-extensions/backlog-workflow`.
 - The contract test runs that local binary in a temporary Git repository.
 - It verifies initialization/config lookup; task and draft create, read, update, archive; task parent/dependency data; task comments/assignees; and repeatable JSON for `task list` and `task view`.
 - Backlog.md provides `--json` for task reads; draft reads use `--plain`.
+
+## Backlog tool
+- The extension registers one `backlog` tool. Its `operation` is one of `task_list`, `task_view`, `task_create`, `task_edit`, `task_archive`, `draft_list`, `draft_view`, `draft_create`, `draft_edit`, `draft_archive`, or `draft_promote`.
+- Use named fields, never raw CLI arguments: `id`, `title`, `description`, `status`, `priority`, `type`, `parent`, `dependsOn`, `assignees`, `labels`, `acceptanceCriteria`, `comment`, `commentAuthor`, `ready`, and `limit` as applicable.
+- Task reads request CLI JSON; drafts use `--plain`. Tool output is capped at 2,000 lines or 50 KB. Write operations are queued on the project's `backlog/` directory; do not bypass the tool for Backlog.md mutations.
+- `task_create` supplies `Medium` when `priority` is absent. An edit must provide a changed field, and `commentAuthor` requires `comment`.
 
 ## Workflow configuration
 - The required types, statuses, priorities, refinement approval boundary, HITL handling, and Definition of Done are defined by [Adopt a Backlog.md workflow contract](decisions/2026-09-03-adopt-backlog-workflow-contract.md).
@@ -24,7 +30,7 @@
 
 ## Verification
 - `npm ci --prefix pi-extensions/backlog-workflow && node --test tests/pi-extensions/backlog-workflow/contract.test.mjs`
-- The contract test covers initialization, idempotent reruns, required configuration validation, Git refusal, and declined reconciliation.
+- The contract test covers the package-local CLI, the structured `backlog` tool (including bounded output and serialized writes), initialization, idempotent reruns, required configuration validation, Git refusal, and declined reconciliation.
 
 ## Related
 - [Decision: Use package-local Backlog.md CLI](decisions/2026-09-03-use-package-local-backlog-cli.md)

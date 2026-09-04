@@ -30,6 +30,7 @@ async function workflowHarness() {
 		registerCommand(name, definition) {
 			commands.set(name, definition);
 		},
+		registerTool() {},
 		async exec(command, args, options = {}) {
 			try {
 				const result = await run(command, args, { cwd: options.cwd, maxBuffer: 1024 * 1024 });
@@ -40,6 +41,26 @@ async function workflowHarness() {
 		},
 	});
 	return commands.get("workflow-init");
+}
+
+async function workflowToolHarness(exec = async (command, args, options = {}) => {
+	try {
+		const result = await run(command, args, { cwd: options.cwd, maxBuffer: 1024 * 1024 });
+		return { ...result, code: 0, killed: false };
+	} catch (error) {
+		return { stdout: error.stdout ?? "", stderr: error.stderr ?? "", code: error.code ?? 1, killed: false };
+	}
+}) {
+	const tools = new Map();
+	const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
+	extension.default({
+		registerCommand() {},
+		registerTool(definition) {
+			tools.set(definition.name, definition);
+		},
+		exec,
+	});
+	return tools.get("backlog");
 }
 
 function commandContext(cwd, confirm = async () => true) {
@@ -66,7 +87,7 @@ test("backlog-workflow is a Pi package with its Backlog.md dependency", async ()
 
 	const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
 	assert.equal(typeof extension.default, "function");
-	assert.doesNotThrow(() => extension.default({ registerCommand() {} }));
+	assert.doesNotThrow(() => extension.default({ registerCommand() {}, registerTool() {} }));
 });
 
 test("package-local Backlog.md CLI supports the workflow contract", async (t) => {
@@ -105,6 +126,45 @@ test("package-local Backlog.md CLI supports the workflow contract", async (t) =>
 	assert.match(await cli(project, "draft", "view", draftId, "--plain"), /Idea updated/);
 	await cli(project, "draft", "archive", draftId);
 	await cli(project, "task", "archive", childId);
+});
+
+test("backlog tool uses structured operations, bounded output, and serialized writes", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-tool-"));
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Tool contract", "--defaults", "--integration-mode", "none");
+
+	const tool = await workflowToolHarness();
+	assert.ok(tool, "Extension did not register backlog tool");
+	const ctx = { cwd: project };
+	const created = await tool.execute("create", {
+		operation: "task_create", title: "Created through tool", type: "feature", acceptanceCriteria: ["Tool creates the ticket"],
+	}, undefined, undefined, ctx);
+	const id = createdId(created.content[0].text, "task");
+	const view = await tool.execute("view", { operation: "task_view", id }, undefined, undefined, ctx);
+	assert.equal(JSON.parse(view.content[0].text).task.title, "Created through tool");
+	const listed = await tool.execute("list", { operation: "task_list", limit: 1 }, undefined, undefined, ctx);
+	assert.equal(JSON.parse(listed.content[0].text).tasks.length, 1);
+	await assert.rejects(() => tool.execute("edit", { operation: "task_edit", id }, undefined, undefined, ctx), /edit requires/);
+
+	let running = 0;
+	let maxRunning = 0;
+	const serialized = await workflowToolHarness(async (command, args) => {
+		if (command === "git") return { stdout: project, stderr: "", code: 0 };
+		running += 1;
+		maxRunning = Math.max(maxRunning, running);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		running -= 1;
+		return { stdout: "line\n".repeat(2_100), stderr: "", code: 0 };
+	});
+	await Promise.all([
+		serialized.execute("one", { operation: "task_create", title: "One" }, undefined, undefined, ctx),
+		serialized.execute("two", { operation: "task_create", title: "Two" }, undefined, undefined, ctx),
+	]);
+	assert.equal(maxRunning, 1);
+	const truncated = await serialized.execute("list", { operation: "task_list" }, undefined, undefined, ctx);
+	assert.match(truncated.content[0].text, /Output truncated/);
 });
 
 test("workflow-init initializes and validates the required configuration idempotently", async (t) => {
