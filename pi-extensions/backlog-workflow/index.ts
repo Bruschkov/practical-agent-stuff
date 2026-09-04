@@ -184,6 +184,13 @@ async function projectRoot(pi: ExtensionAPI, cwd: string) {
 	return result.code === 0 && result.stdout.trim() ? result.stdout.trim() : cwd;
 }
 
+async function runBacklog(pi: ExtensionAPI, root: string, args: string[]) {
+	const result = await pi.exec(cli, args, { cwd: root, timeout: 30_000 });
+	const output = `${result.stdout}${result.stderr ? `${result.stdout ? "\n" : ""}${result.stderr}` : ""}`.trim();
+	if (result.code !== 0) throw new Error(output || `backlog ${args.join(" ")} failed.`);
+	return output;
+}
+
 export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 	pi.registerCommand("workflow-init", {
 		description: "Initialize or reconcile the Backlog.md workflow configuration",
@@ -223,6 +230,46 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				ctx.ui.notify("Backlog.md workflow is ready", "success");
 			} catch (error: any) {
 				ctx.ui.notify(`workflow-init failed: ${error?.message ?? String(error)}`, "error");
+			}
+		},
+	});
+
+	pi.registerCommand("refine", {
+		description: "Create or resume a Backlog.md refinement draft",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("refine requires interactive mode", "error");
+				return;
+			}
+
+			const value = args.trim();
+			if (!value) {
+				ctx.ui.notify("Usage: /refine <idea-or-draft-id>", "error");
+				return;
+			}
+
+			const root = await projectRoot(pi, ctx.cwd);
+			try {
+				let draftId: string;
+				let created = false;
+				if (/^DRAFT-\d+$/i.test(value)) {
+					draftId = value.toUpperCase();
+					await runBacklog(pi, root, ["draft", "view", draftId, "--plain"]);
+				} else {
+					const output = await runBacklog(pi, root, [
+						"draft", "create", value,
+						"--description", `## Intent\n${value}\n\n## Accepted decisions\n- Intent: ${value}\n\nApproval: pending`,
+					]);
+					const match = output.match(/Created draft (\S+)/);
+					if (!match) throw new Error(`Could not determine the created draft ID: ${output}`);
+					draftId = match[1];
+					created = true;
+				}
+
+				ctx.ui.notify(`${created ? "Created" : "Resuming"} refinement draft ${draftId}`, "success");
+				pi.sendUserMessage(`Refine Backlog.md draft ${draftId} in this main session. ${created ? "Start from its recorded intent." : "Read the existing draft first."} Ask focused questions, and use the backlog tool to record every accepted decision in the draft's description under "Accepted decisions". Keep \`Approval: pending\`; do not create or promote tasks yet.`);
+			} catch (error: any) {
+				ctx.ui.notify(`refine failed: ${error?.message ?? String(error)}`, "error");
 			}
 		},
 	});

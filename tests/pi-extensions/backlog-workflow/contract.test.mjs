@@ -25,12 +25,16 @@ function createdId(output, kind) {
 
 async function workflowHarness() {
 	const commands = new Map();
+	const messages = [];
 	const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
 	extension.default({
 		registerCommand(name, definition) {
 			commands.set(name, definition);
 		},
 		registerTool() {},
+		sendUserMessage(message) {
+			messages.push(message);
+		},
 		async exec(command, args, options = {}) {
 			try {
 				const result = await run(command, args, { cwd: options.cwd, maxBuffer: 1024 * 1024 });
@@ -40,7 +44,7 @@ async function workflowHarness() {
 			}
 		},
 	});
-	return commands.get("workflow-init");
+	return { commands, messages };
 }
 
 async function workflowToolHarness(exec = async (command, args, options = {}) => {
@@ -167,13 +171,40 @@ test("backlog tool uses structured operations, bounded output, and serialized wr
 	assert.match(truncated.content[0].text, /Output truncated/);
 });
 
+test("refine creates or resumes a draft and continues in the main session", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-refine-"));
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Refine contract", "--defaults", "--integration-mode", "none");
+
+	const { commands, messages } = await workflowHarness();
+	const command = commands.get("refine");
+	assert.ok(command, "Extension did not register refine");
+	const first = commandContext(project);
+	await command.handler("Make refinement durable", first.ctx);
+	assert.equal(first.notifications.at(-1).level, "success");
+	assert.match(await cli(project, "draft", "list", "--plain"), /DRAFT-1 - Make refinement durable/);
+	const draft = await cli(project, "draft", "view", "DRAFT-1", "--plain");
+	assert.match(draft, /## Accepted decisions/);
+	assert.match(draft, /Approval: pending/);
+	assert.match(messages.at(-1), /draft DRAFT-1/);
+	assert.match(messages.at(-1), /main session/);
+
+	const resumed = commandContext(project);
+	await command.handler("DRAFT-1", resumed.ctx);
+	assert.equal(resumed.notifications.at(-1).level, "success");
+	assert.equal(((await cli(project, "draft", "list", "--plain")).match(/DRAFT-\d+/g) ?? []).length, 1);
+});
+
 test("workflow-init initializes and validates the required configuration idempotently", async (t) => {
 	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
 	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-init-"));
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
 
-	const command = await workflowHarness();
+	const { commands } = await workflowHarness();
+	const command = commands.get("workflow-init");
 	assert.ok(command);
 	const first = commandContext(project);
 	await command.handler("", first.ctx);
@@ -190,7 +221,8 @@ test("workflow-init initializes and validates the required configuration idempot
 });
 
 test("workflow-init requires Git and never changes existing config without confirmation", async (t) => {
-	const command = await workflowHarness();
+	const { commands } = await workflowHarness();
+	const command = commands.get("workflow-init");
 	const noGit = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-no-git-"));
 	t.after(() => rm(noGit, { recursive: true, force: true }));
 	const rejected = commandContext(noGit);

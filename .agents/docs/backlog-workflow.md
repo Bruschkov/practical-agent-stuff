@@ -8,7 +8,7 @@
 - `backlog.md` is a package-local runtime dependency with the compatible range `^1.4.0`; use its locally installed CLI, not a Homebrew or other global installation.
 - The lockfile records the resolved CLI and peer-dependency graph required by `npm ci`. Do not change the supported range without validating the CLI contract.
 - For source-local development, run `npm ci --prefix pi-extensions/backlog-workflow` before loading it. Use `npm install --prefix pi-extensions/backlog-workflow` only to resynchronize the lockfile after a manifest change, then verify with `npm ci`.
-- Future workflow code must use the package-local `backlog` Pi tool, not shell commands or Backlog.md internals. The tool has structured task/draft operations; task reads use the CLI JSON interface and draft reads use plain text.
+- Controller commands use the package-local CLI; main-session refinement uses the `backlog` Pi tool rather than shell commands or Backlog.md internals. The tool has structured task/draft operations; task reads use the CLI JSON interface and draft reads use plain text.
 
 ## CLI contract
 - Source-local test setup: `npm ci --prefix pi-extensions/backlog-workflow`.
@@ -22,6 +22,10 @@
 - Task reads request CLI JSON; drafts use `--plain`. Tool output is capped at 2,000 lines or 50 KB. Write operations are queued on the project's `backlog/` directory; do not bypass the tool for Backlog.md mutations.
 - `task_create` supplies `Medium` when `priority` is absent. An edit must provide a changed field, and `commentAuthor` requires `comment`.
 
+## Refinement
+- `/refine <idea-or-draft-id>` requires interactive mode. An idea creates a draft with its intent, an `Accepted decisions` section, and `Approval: pending`; a `DRAFT-<number>` argument validates and resumes that draft.
+- The command sends the refinement to the main Pi session. The session must read the draft first when resuming and persist each accepted decision through the `backlog` tool. It must not create or promote tasks while approval remains pending.
+
 ## Workflow configuration
 - The required types, statuses, priorities, refinement approval boundary, HITL handling, and Definition of Done are defined by [Adopt a Backlog.md workflow contract](decisions/2026-09-03-adopt-backlog-workflow-contract.md).
 - `/workflow-init` is interactive and requires Git. It operates at the Git top level, initializes an absent Backlog.md project only after confirmation, and reconfirms before changing an existing configuration.
@@ -30,7 +34,7 @@
 
 ## Verification
 - `npm ci --prefix pi-extensions/backlog-workflow && node --test tests/pi-extensions/backlog-workflow/contract.test.mjs`
-- The contract test covers the package-local CLI, the structured `backlog` tool (including bounded output and serialized writes), initialization, idempotent reruns, required configuration validation, Git refusal, and declined reconciliation.
+- The contract test covers the package-local CLI, the structured `backlog` tool (including bounded output and serialized writes), `/refine` draft creation/resume and main-session handoff, initialization, idempotent reruns, required configuration validation, Git refusal, and declined reconciliation.
 
 ## Related
 - [Decision: Use package-local Backlog.md CLI](decisions/2026-09-03-use-package-local-backlog-cli.md)
