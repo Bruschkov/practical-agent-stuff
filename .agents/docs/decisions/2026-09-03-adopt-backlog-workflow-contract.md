@@ -102,3 +102,5 @@ Revisit this contract if Backlog.md cannot represent the required configuration 
 2026-09-04: Outgoing handoffs from implementation workers are a bonus, not a prerequisite for core workflow delivery. The child-Pi runner and `/implement-run` must work with no handoff extension. Once the runner exists, it may inherit an installed `backlog-handoff` extension; do not add a workflow dependency, detection, adapter, or dedicated tests for this optional capability.
 
 2026-09-04: A child worker opts into its final-result tool with `PI_BACKLOG_WORKFLOW_WORKER=1`. In that mode only, `complete_transition` accepts `completed`, `needs_human`, `blocked`, or `failed`, returns the outcome to the controller, and terminates the child run. It makes no Backlog.md mutation, so controller-only status transitions remain enforced.
+
+2026-09-04: Verified `runChildPi` supplies the workflow extension without `--no-extensions`; Pi therefore discovers an installed project- or global-level `backlog-handoff` for the worker. No dependency, detection, adapter, or dedicated test is needed.

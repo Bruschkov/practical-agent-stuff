@@ -31,11 +31,11 @@
 
 ## Implementation workers
 - Core child-Pi runner and `/implement-run` behavior must work without `backlog-handoff`.
-- `runChildPi` (exported by `pi-extensions/backlog-workflow/index.ts`) starts an isolated `pi --mode json -p --no-session` child in the project cwd. It loads this extension with `PI_BACKLOG_WORKFLOW_WORKER=1`, inherits the selected model and thinking level, and lets Pi rediscover project context files and installed resources.
+- `runChildPi` (exported by `pi-extensions/backlog-workflow/index.ts`) starts an isolated `pi --mode json -p --no-session` child in the project cwd. It loads this extension with `PI_BACKLOG_WORKFLOW_WORKER=1`, inherits the selected model and thinking level, and lets Pi rediscover project context files and installed resources. It does not pass `--no-extensions`, so an installed project- or global-level `backlog-handoff` is available to the worker.
 - The runner consumes JSON `message_end` events, aggregates assistant usage, returns bounded final output and stderr (2,000 lines/50 KB), and reports non-zero exit, cancellation, invalid completion, or a missing `complete_transition` as a failure. Its result contains the validated `completed`, `needs_human`, `blocked`, or `failed` outcome when present.
 - A child worker sets `PI_BACKLOG_WORKFLOW_WORKER=1`. Only in that mode does the extension register `complete_transition`; it is the worker's single terminating final action and accepts only `completed`, `needs_human`, `blocked`, or `failed`.
 - `complete_transition` returns its outcome to the controller and does not mutate Backlog.md; the controller owns ticket status transitions.
-- As a bonus after the runner exists, inherit an installed `backlog-handoff` extension into workers so they can route discovered cross-project work. Do not add a dependency, detection, adapter, or dedicated test for it.
+- Installed `backlog-handoff` is inherited through normal Pi extension discovery, so workers can route discovered cross-project work. Do not add a dependency, detection, adapter, or dedicated test for it.
 
 ## Workflow configuration
 - The required types, statuses, priorities, refinement approval boundary, HITL handling, and Definition of Done are defined by [Adopt a Backlog.md workflow contract](decisions/2026-09-03-adopt-backlog-workflow-contract.md).
