@@ -55,16 +55,29 @@ async function workflowToolHarness(exec = async (command, args, options = {}) =>
 		return { stdout: error.stdout ?? "", stderr: error.stderr ?? "", code: error.code ?? 1, killed: false };
 	}
 }) {
-	const tools = new Map();
-	const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
-	extension.default({
-		registerCommand() {},
-		registerTool(definition) {
-			tools.set(definition.name, definition);
-		},
-		exec,
-	});
+	const tools = await registeredTools(exec);
 	return tools.get("backlog");
+}
+
+async function registeredTools(exec = async () => ({ stdout: "", stderr: "", code: 0, killed: false }), worker = false) {
+	const tools = new Map();
+	const previous = process.env.PI_BACKLOG_WORKFLOW_WORKER;
+	if (worker) process.env.PI_BACKLOG_WORKFLOW_WORKER = "1";
+	else delete process.env.PI_BACKLOG_WORKFLOW_WORKER;
+	try {
+		const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
+		extension.default({
+			registerCommand() {},
+			registerTool(definition) {
+				tools.set(definition.name, definition);
+			},
+			exec,
+		});
+	} finally {
+		if (previous === undefined) delete process.env.PI_BACKLOG_WORKFLOW_WORKER;
+		else process.env.PI_BACKLOG_WORKFLOW_WORKER = previous;
+	}
+	return tools;
 }
 
 function commandContext(cwd, confirm = async () => true) {
@@ -130,6 +143,16 @@ test("package-local Backlog.md CLI supports the workflow contract", async (t) =>
 	assert.match(await cli(project, "draft", "view", draftId, "--plain"), /Idea updated/);
 	await cli(project, "draft", "archive", draftId);
 	await cli(project, "task", "archive", childId);
+});
+
+test("complete_transition is worker-only, validates outcomes, and terminates", async () => {
+	assert.equal((await registeredTools()).has("complete_transition"), false);
+	const tool = (await registeredTools(undefined, true)).get("complete_transition");
+	assert.ok(tool);
+	assert.deepEqual(tool.parameters.properties.outcome.enum, ["completed", "needs_human", "blocked", "failed"]);
+	const result = await tool.execute("complete", { outcome: "completed" });
+	assert.deepEqual(result.details, { outcome: "completed" });
+	assert.equal(result.terminate, true);
 });
 
 test("backlog tool uses structured operations, bounded output, and serialized writes", async (t) => {

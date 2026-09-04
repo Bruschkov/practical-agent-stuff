@@ -31,6 +31,8 @@
 
 ## Implementation workers
 - Core child-Pi runner and `/implement-run` behavior must work without `backlog-handoff`.
+- A child worker sets `PI_BACKLOG_WORKFLOW_WORKER=1`. Only in that mode does the extension register `complete_transition`; it is the worker's single terminating final action and accepts only `completed`, `needs_human`, `blocked`, or `failed`.
+- `complete_transition` returns its outcome to the controller and does not mutate Backlog.md; the controller owns ticket status transitions.
 - As a bonus after the runner exists, inherit an installed `backlog-handoff` extension into workers so they can route discovered cross-project work. Do not add a dependency, detection, adapter, or dedicated test for it.
 
 ## Workflow configuration
@@ -41,7 +43,7 @@
 
 ## Verification
 - `npm ci --prefix pi-extensions/backlog-workflow && node --test tests/pi-extensions/backlog-workflow/contract.test.mjs`
-- The contract test covers the package-local CLI; the structured `backlog` tool (including bounded output and serialized writes); `/refine` draft creation/resume; valid handoff discovery, source-format preservation, and post-publication move to `processed/`; approval/refusal; hierarchy/dependency publication and archival; initialization; idempotent reruns; required configuration validation; Git refusal; and declined reconciliation.
+- The contract test covers the package-local CLI; the structured `backlog` tool (including bounded output and serialized writes); worker-only `complete_transition` outcome validation and termination; `/refine` draft creation/resume; valid handoff discovery, source-format preservation, and post-publication move to `processed/`; approval/refusal; hierarchy/dependency publication and archival; initialization; idempotent reruns; required configuration validation; Git refusal; and declined reconciliation.
 
 ## Related
 - [Decision: Use package-local Backlog.md CLI](decisions/2026-09-03-use-package-local-backlog-cli.md)

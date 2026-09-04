@@ -18,7 +18,7 @@
 
 ## Phase 3 — One-ticket implementation
 
-- [ ] Add a worker-only terminating `complete_transition` tool with validated outcomes: `completed`, `needs_human`, `blocked`, and `failed`.
+- [x] Add a worker-only terminating `complete_transition` tool with validated outcomes: `completed`, `needs_human`, `blocked`, and `failed`.
 - [ ] Add an isolated child-Pi runner based on Pi's subagent pattern: JSON event parsing, project cwd/context inheritance, cancellation, bounded output, usage capture, and failure reporting.
 - [ ] Bonus: inherit installed `backlog-handoff` into implementation workers so they can route discovered cross-project work.
 - [ ] Add the implementer worker prompt: read the ticket and project instructions, implement minimally, run required checks, assess documentation impact, and return structured evidence.

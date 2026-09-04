@@ -28,6 +28,7 @@ const operations = [
 	"task_list", "task_view", "task_create", "task_edit", "task_archive",
 	"draft_list", "draft_view", "draft_create", "draft_edit", "draft_archive", "draft_promote", "refinement_publish",
 ] as const;
+const completeOutcomes = ["completed", "needs_human", "blocked", "failed"] as const;
 const PROPOSED_TASK_SCHEMA = Type.Object({
 	key: Type.String({ minLength: 1, description: "Unique proposal-local task key." }),
 	title: Type.String({ minLength: 1, description: "Ticket title." }),
@@ -38,6 +39,12 @@ const PROPOSED_TASK_SCHEMA = Type.Object({
 	parentKey: Type.Optional(Type.String({ minLength: 1, description: "Proposal-local parent key." })),
 	dependsOn: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Proposal-local prerequisite keys." })),
 });
+const COMPLETE_TRANSITION_SCHEMA = Type.Object({
+	outcome: Type.String({ enum: completeOutcomes, description: "Final worker outcome." }),
+});
+
+type CompleteTransitionInput = Static<typeof COMPLETE_TRANSITION_SCHEMA>;
+
 const BACKLOG_SCHEMA = Type.Object({
 	operation: Type.String({ enum: operations, description: "Backlog.md operation to run." }),
 	id: Type.Optional(Type.String({ description: "Task or draft ID for view, edit, archive, or promote." })),
@@ -331,6 +338,24 @@ async function publishRefinement(pi: ExtensionAPI, root: string, input: BacklogI
 }
 
 export default function backlogWorkflowExtension(pi: ExtensionAPI) {
+	if (process.env.PI_BACKLOG_WORKFLOW_WORKER === "1") {
+		pi.registerTool({
+			name: "complete_transition",
+			label: "Complete Transition",
+			description: "Finish this implementation-worker run with its validated outcome.",
+			promptSnippet: "Finish the implementation worker with a terminating outcome",
+			promptGuidelines: ["Use complete_transition exactly once as the implementation worker's final action."],
+			parameters: COMPLETE_TRANSITION_SCHEMA,
+			async execute(_toolCallId, input: CompleteTransitionInput) {
+				return {
+					content: [{ type: "text" as const, text: `Worker outcome: ${input.outcome}` }],
+					details: { outcome: input.outcome },
+					terminate: true,
+				};
+			},
+		});
+	}
+
 	pi.registerCommand("workflow-init", {
 		description: "Initialize or reconcile the Backlog.md workflow configuration",
 		handler: async (_args, ctx) => {
