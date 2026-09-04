@@ -22,6 +22,7 @@ export type ChildPiRequest = {
 	prompt: string;
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
+	readOnly?: boolean;
 };
 
 export type ChildPiResult = {
@@ -43,6 +44,14 @@ export function implementerPrompt(taskId: string) {
 4. Assess documentation and durable-decision impact; update only material required by the ticket or project instructions.
 5. Before ending, respond with one JSON object (no Markdown) containing: {"summary": string, "plan": string[], "modifiedFiles": string[], "acceptanceCriteria": [{"criterion": string, "status": "met"|"unmet", "evidence": string}], "checks": [{"command": string, "status": "passed"|"failed"|"not_run", "evidence": string}], "documentation": {"impact": "none"|"updated"|"needs_human", "evidence": string}, "blockers": string[]}.
 6. Then call complete_transition exactly once as your final action: "completed" only when every criterion is met and required checks pass; "needs_human" for a specific human decision; "blocked" for an external blocker; otherwise "failed".`;
+}
+
+export function reviewerPrompt(taskId: string) {
+	return `You are the read-only reviewer for Backlog.md ticket ${JSON.stringify(taskId)}.
+
+1. Read the ticket with the backlog tool (operation: "task_view", id: ${JSON.stringify(taskId)}), its implementation evidence, and the relevant changed code.
+2. Check every acceptance criterion and report only concrete required rework or a concise approval. Do not modify files, Backlog.md, or Git state; your tools are read-only.
+3. Then call complete_transition exactly once as your final action: "completed" only when no required rework remains; "needs_human" for a specific human decision; "blocked" for an external blocker; otherwise "failed".`;
 }
 
 function invocation() {
@@ -74,9 +83,10 @@ function addUsage(total: WorkerUsage, value: any) {
 	for (const key of ["input", "output", "cacheRead", "cacheWrite", "total"] as const) total.cost[key] += Number(value?.cost?.[key]) || 0;
 }
 
-export async function runChildPi({ cwd, prompt, model, thinkingLevel }: ChildPiRequest, signal?: AbortSignal): Promise<ChildPiResult> {
+export async function runChildPi({ cwd, prompt, model, thinkingLevel, readOnly }: ChildPiRequest, signal?: AbortSignal): Promise<ChildPiResult> {
 	const child = invocation();
 	const args = [...child.args, "--mode", "json", "-p", "--no-session", "--extension", extensionPath];
+	if (readOnly) args.push("--tools", "read,grep,find,ls,backlog,complete_transition");
 	if (model) args.push("--model", `${model.provider}/${model.id}`);
 	if (thinkingLevel) args.push("--thinking", thinkingLevel);
 	args.push("--", prompt);
@@ -98,7 +108,7 @@ export async function runChildPi({ cwd, prompt, model, thinkingLevel }: ChildPiR
 			signal?.removeEventListener("abort", abort);
 			resolve({ exitCode, cancelled, outcome, output: bounded(lastOutput), stderr: bounded(stderr), usage: totalUsage, failure });
 		};
-		const proc = spawn(child.command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PI_BACKLOG_WORKFLOW_WORKER: "1" } });
+		const proc = spawn(child.command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PI_BACKLOG_WORKFLOW_WORKER: "1", PI_BACKLOG_WORKFLOW_REVIEWER: readOnly ? "1" : "0" } });
 		const abort = () => {
 			cancelled = true;
 			proc.kill("SIGTERM");

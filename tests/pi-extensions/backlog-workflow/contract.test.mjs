@@ -155,8 +155,8 @@ test("complete_transition is worker-only, validates outcomes, and terminates", a
 	assert.equal(result.terminate, true);
 });
 
-test("implementer prompt requires ticket evidence and a terminating outcome", async () => {
-	const { implementerPrompt } = await import(`${pathToFileURL(path.join(packageRoot, "worker-runner.ts")).href}?t=${Date.now()}`);
+test("worker prompts require ticket evidence or read-only review and a terminating outcome", async () => {
+	const { implementerPrompt, reviewerPrompt } = await import(`${pathToFileURL(path.join(packageRoot, "worker-runner.ts")).href}?t=${Date.now()}`);
 	const prompt = implementerPrompt("TASK-42");
 	assert.match(prompt, /task_view/);
 	assert.match(prompt, /project instructions/);
@@ -166,6 +166,10 @@ test("implementer prompt requires ticket evidence and a terminating outcome", as
 	assert.match(prompt, /\"modifiedFiles\"/);
 	assert.match(prompt, /complete_transition exactly once as your final action/);
 	assert.match(prompt, /TASK-42/);
+	const review = reviewerPrompt("TASK-42");
+	assert.match(review, /read-only reviewer/);
+	assert.match(review, /Do not modify files, Backlog\.md, or Git state/);
+	assert.match(review, /complete_transition exactly once as your final action/);
 });
 
 test("child Pi runner inherits project context and reports bounded, malformed, and cancelled runs", async (t) => {
@@ -176,7 +180,7 @@ test("child Pi runner inherits project context and reports bounded, malformed, a
 		'import { writeFileSync } from "node:fs";',
 		'import path from "node:path";',
 		'const prompt = process.argv.at(-1);',
-		'writeFileSync(path.join(process.cwd(), "worker-invocation.json"), JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), worker: process.env.PI_BACKLOG_WORKFLOW_WORKER }));',
+		'writeFileSync(path.join(process.cwd(), "worker-invocation.json"), JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), worker: process.env.PI_BACKLOG_WORKFLOW_WORKER, reviewer: process.env.PI_BACKLOG_WORKFLOW_REVIEWER }));',
 		'if (prompt === "wait") setInterval(() => {}, 1_000);',
 		'else {',
 		'  const output = prompt === "large" ? "line\\n".repeat(2_100) : "implemented";',
@@ -198,6 +202,16 @@ test("child Pi runner inherits project context and reports bounded, malformed, a
 		args: ["--mode", "json", "-p", "--no-session", "--extension", path.join(packageRoot, "index.ts"), "--model", "test/model", "--thinking", "high", "--", "large"],
 		cwd: await realpath(project),
 		worker: "1",
+		reviewer: "0",
+	});
+
+	const reviewer = await runChildPi({ cwd: project, prompt: "review", readOnly: true });
+	assert.equal(reviewer.outcome, "completed");
+	assert.deepEqual(JSON.parse(await readFile(path.join(project, "worker-invocation.json"), "utf8")), {
+		args: ["--mode", "json", "-p", "--no-session", "--extension", path.join(packageRoot, "index.ts"), "--tools", "read,grep,find,ls,backlog,complete_transition", "--", "review"],
+		cwd: await realpath(project),
+		worker: "1",
+		reviewer: "1",
 	});
 
 	const malformed = await runChildPi({ cwd: project, prompt: "missing" });
@@ -218,6 +232,12 @@ test("backlog tool uses structured operations, bounded output, and serialized wr
 
 	const tool = await workflowToolHarness();
 	assert.ok(tool, "Extension did not register backlog tool");
+	const previousReviewer = process.env.PI_BACKLOG_WORKFLOW_REVIEWER;
+	process.env.PI_BACKLOG_WORKFLOW_REVIEWER = "1";
+	const reviewerTool = await workflowToolHarness();
+	await assert.rejects(() => reviewerTool.execute("write", { operation: "task_create", title: "Forbidden" }, undefined, undefined, { cwd: project }), /Reviewer workers may only read/);
+	if (previousReviewer === undefined) delete process.env.PI_BACKLOG_WORKFLOW_REVIEWER;
+	else process.env.PI_BACKLOG_WORKFLOW_REVIEWER = previousReviewer;
 	const ctx = { cwd: project };
 	const created = await tool.execute("create", {
 		operation: "task_create", title: "Created through tool", type: "feature", acceptanceCriteria: ["Tool creates the ticket"],
@@ -260,9 +280,11 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 		'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
 		`const invocations = ${JSON.stringify(invocations)};`,
 		'const call = existsSync(invocations) ? Number(readFileSync(invocations, "utf8")) : 0;',
+		'const prompt = process.argv.at(-1);',
 		'writeFileSync(invocations, String(call + 1));',
 		'const evidence = { summary: "Implemented", plan: ["Change code"], modifiedFiles: ["index.ts"], acceptanceCriteria: [{ criterion: "Works", status: "met", evidence: "Checked" }], checks: [{ command: "node --test", status: "passed", evidence: "ok" }], documentation: { impact: "none", evidence: "No docs" }, blockers: [] };',
-		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: call ? "malformed" : JSON.stringify(evidence) }], usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } } }));',
+		'const output = prompt.includes("read-only reviewer") ? "Review passed" : call ? "malformed" : JSON.stringify(evidence);',
+		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: output }], usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } } }));',
 		'console.log(JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "complete_transition", details: { outcome: "completed" }, isError: false, content: [] } }));',
 	].join("\n"));
 	const previousScript = process.argv[1];
@@ -295,7 +317,7 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	await command.handler(blockedId, blockedRun.ctx);
 	assert.match(blockedRun.notifications.at(-1).message, /not a ready, unblocked leaf task/);
 	assert.equal(JSON.parse(await cli(project, "task", "view", blockedId, "--json")).task.status, "Open");
-	assert.equal(await readFile(invocations, "utf8"), "2");
+	assert.equal(await readFile(invocations, "utf8"), "3");
 });
 
 test("refine creates or resumes a draft and continues in the main session", async (t) => {

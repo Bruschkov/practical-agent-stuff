@@ -10,9 +10,9 @@ import {
 	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { implementerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
+import { implementerPrompt, reviewerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
 
-export { implementerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
+export { implementerPrompt, reviewerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
 
 const cli = fileURLToPath(new URL(`./node_modules/.bin/backlog${process.platform === "win32" ? ".cmd" : ""}`, import.meta.url));
 const configPaths = ["backlog.config.yml", "backlog/config.yml", ".backlog/config.yml"];
@@ -401,9 +401,9 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 		pi.registerTool({
 			name: "complete_transition",
 			label: "Complete Transition",
-			description: "Finish this implementation-worker run with its validated outcome.",
-			promptSnippet: "Finish the implementation worker with a terminating outcome",
-			promptGuidelines: ["Use complete_transition exactly once as the implementation worker's final action."],
+			description: "Finish this workflow-worker run with its validated outcome.",
+			promptSnippet: "Finish the workflow worker with a terminating outcome",
+			promptGuidelines: ["Use complete_transition exactly once as the workflow worker's final action."],
 			parameters: COMPLETE_TRANSITION_SCHEMA,
 			async execute(_toolCallId, input: CompleteTransitionInput) {
 				return {
@@ -480,7 +480,18 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				if (result.outcome === "completed" && !completedEvidence(evidence, task)) throw new Error("Worker marked completion without meeting every criterion and check.");
 				const status = result.outcome === "completed" ? "In Review" : result.outcome === "blocked" ? "Blocked" : result.outcome === "needs_human" ? "Needs Human" : "Open";
 				await persistImplementation(pi, root, task, evidence, result, status);
-				ctx.ui.notify(`${task.id}: ${status}`, result.outcome === "completed" ? "success" : "warning");
+				started = false;
+				if (result.outcome !== "completed") return void ctx.ui.notify(`${task.id}: ${status}`, "warning");
+
+				const review = await runChildPi({
+					cwd: root,
+					prompt: reviewerPrompt(task.id),
+					model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+					thinkingLevel: ctx.thinkingLevel,
+					readOnly: true,
+				});
+				if (review.failure || !review.outcome) return void ctx.ui.notify(`${task.id}: review failed: ${review.failure || "Worker did not return an outcome."}`, "error");
+				ctx.ui.notify(`${task.id}: In Review${review.outcome === "completed" ? "" : ` (${review.outcome})`}`, review.outcome === "completed" ? "success" : "warning");
 			} catch (error: any) {
 				if (started) {
 					try {
@@ -565,6 +576,7 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 		promptGuidelines: ["Use backlog rather than shell commands to read or update Backlog.md tickets and drafts."],
 		parameters: BACKLOG_SCHEMA,
 		async execute(_toolCallId, input: BacklogInput, signal, _onUpdate, ctx) {
+			if (process.env.PI_BACKLOG_WORKFLOW_REVIEWER === "1" && isWrite(input.operation)) throw new Error("Reviewer workers may only read Backlog.md.");
 			const root = await projectRoot(pi, ctx.cwd);
 			const run = async () => {
 				if (input.operation === "refinement_publish") {
