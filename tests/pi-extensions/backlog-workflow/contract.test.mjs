@@ -155,6 +155,19 @@ test("complete_transition is worker-only, validates outcomes, and terminates", a
 	assert.equal(result.terminate, true);
 });
 
+test("implementer prompt requires ticket evidence and a terminating outcome", async () => {
+	const { implementerPrompt } = await import(`${pathToFileURL(path.join(packageRoot, "worker-runner.ts")).href}?t=${Date.now()}`);
+	const prompt = implementerPrompt("TASK-42");
+	assert.match(prompt, /task_view/);
+	assert.match(prompt, /project instructions/);
+	assert.match(prompt, /Implement only the ticket's acceptance criteria/);
+	assert.match(prompt, /required checks/);
+	assert.match(prompt, /documentation and durable-decision impact/);
+	assert.match(prompt, /\"modifiedFiles\"/);
+	assert.match(prompt, /complete_transition exactly once as your final action/);
+	assert.match(prompt, /TASK-42/);
+});
+
 test("child Pi runner inherits project context and reports bounded, malformed, and cancelled runs", async (t) => {
 	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-worker-"));
 	const fakePi = path.join(project, "fake-pi.mjs");

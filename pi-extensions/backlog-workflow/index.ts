@@ -11,7 +11,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
-export { runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
+export { implementerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
 
 const cli = fileURLToPath(new URL(`./node_modules/.bin/backlog${process.platform === "win32" ? ".cmd" : ""}`, import.meta.url));
 const configPaths = ["backlog.config.yml", "backlog/config.yml", ".backlog/config.yml"];

@@ -34,6 +34,17 @@ export type ChildPiResult = {
 	failure?: string;
 };
 
+export function implementerPrompt(taskId: string) {
+	return `You are the implementation worker for Backlog.md ticket ${JSON.stringify(taskId)}.
+
+1. Read the ticket with the backlog tool (operation: "task_view", id: ${JSON.stringify(taskId)}) and read all applicable project instructions and relevant code before changing anything.
+2. Implement only the ticket's acceptance criteria; reuse existing patterns and keep the diff minimal. Do not change ticket status or make Git commits.
+3. Run the ticket-required checks and the smallest relevant project checks. Do not report a failed or skipped required check as passing.
+4. Assess documentation and durable-decision impact; update only material required by the ticket or project instructions.
+5. Before ending, respond with one JSON object (no Markdown) containing: {"summary": string, "plan": string[], "modifiedFiles": string[], "acceptanceCriteria": [{"criterion": string, "status": "met"|"unmet", "evidence": string}], "checks": [{"command": string, "status": "passed"|"failed"|"not_run", "evidence": string}], "documentation": {"impact": "none"|"updated"|"needs_human", "evidence": string}, "blockers": string[]}.
+6. Then call complete_transition exactly once as your final action: "completed" only when every criterion is met and required checks pass; "needs_human" for a specific human decision; "blocked" for an external blocker; otherwise "failed".`;
+}
+
 function invocation() {
 	const script = process.argv[1];
 	if (script && !script.startsWith("/$bunfs/root/") && existsSync(script)) return { command: process.execPath, args: [script] };
