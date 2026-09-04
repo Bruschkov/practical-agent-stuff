@@ -489,13 +489,31 @@ test("implement-run reconciles and requires final human approval after every des
 	process.argv[1] = fakePi;
 	t.after(() => { process.argv[1] = previousScript; });
 
-	const { commands } = await workflowHarness();
+	const { commands, messages } = await workflowHarness();
 	await commands.get("workflow-init").handler("", commandContext(project).ctx);
 	const featureId = createdId(await cli(project, "task", "create", "Feature", "--type", "feature", "--priority", "Medium", "--ac", "Feature works"), "task");
 	const leafId = createdId(await cli(project, "task", "create", "Leaf", "--type", "task", "--priority", "Medium", "--parent", featureId, "--ac", "Leaf works"), "task");
 	await cli(project, "task", "edit", leafId, "--status", "Done", "--final-summary", "Leaf shipped", "--notes", "node --test: passed", "--modified-file", "tracked.txt", "--comment", "Verdict: approved", "--comment-author", "@reviewer");
-	await commands.get("implement-run").handler(featureId, commandContext(project, async () => false).ctx);
+	await writeFile(path.join(project, "user-staged.txt"), "do not commit\n");
+	await run("git", ["add", "user-staged.txt"], { cwd: project });
+	const guarded = commandContext(project);
+	await commands.get("implement-run").handler(featureId, guarded.ctx);
+	assert.match(guarded.notifications.at(-1).message, /Git index already contains staged changes/);
 	assert.equal(JSON.parse(await cli(project, "task", "view", featureId, "--json")).task.status, "In Review");
+	await run("git", ["restore", "--staged", "user-staged.txt"], { cwd: project });
+	await commands.get("implement-run").handler(featureId, commandContext(project, async () => false, async () => "Why this approach?").ctx);
+	let pending = JSON.parse(await cli(project, "task", "view", featureId, "--json")).task;
+	assert.equal(pending.status, "In Review");
+	assert.match(pending.comments.at(-1).body, /Why this approach\?/);
+	assert.match(messages.at(-1), /Discuss it before changing anything/);
+	const changedIndex = commandContext(project, async () => {
+		await run("git", ["add", "user-staged.txt"], { cwd: project });
+		return true;
+	});
+	await commands.get("implement-run").handler(featureId, changedIndex.ctx);
+	assert.match(changedIndex.notifications.at(-1).message, /Git index changed after final review/);
+	assert.equal(JSON.parse(await cli(project, "task", "view", featureId, "--json")).task.status, "In Review");
+	await run("git", ["restore", "--staged", "user-staged.txt"], { cwd: project });
 	let approvalTitle = "";
 	let approvalReport = "";
 	const approval = commandContext(project, async (title, report) => {
@@ -507,12 +525,16 @@ test("implement-run reconciles and requires final human approval after every des
 	const feature = JSON.parse(await cli(project, "task", "view", featureId, "--json")).task;
 	assert.equal(feature.status, "Done");
 	assert.match(approvalTitle, new RegExp(featureId));
+	assert.match(approvalTitle, /and commit/);
 	assert.match(approvalReport, /Leaf shipped/);
 	assert.match(approvalReport, /node --test: passed/);
 	assert.match(approvalReport, /Verdict: approved/);
+	assert.match(approvalReport, /Staged owned files/);
 	assert.match(approvalReport, /-before[\s\S]*\+after/);
+	assert.deepEqual((await run("git", ["show", "--format=", "--name-only", "HEAD"], { cwd: project })).stdout.trim().split("\n"), ["tracked.txt"]);
 	assert.ok(feature.comments.some(({ author, body }) => author === "@reconciler" && /parent acceptance criteria/.test(body)));
 	assert.match(feature.comments.at(-1).body, /Final feature approval/);
+	assert.match(feature.comments.at(-1).body, /Commit: [0-9a-f]+/);
 });
 
 test("feature selection follows hierarchy, dependency, priority, and resume JSON fixtures", async () => {

@@ -353,15 +353,19 @@ function recordedPath(root: string, file: string) {
 	return !!file.trim() && !path.isAbsolute(file) && resolved !== root && resolved.startsWith(`${root}${path.sep}`);
 }
 
-async function finalFeatureReport(pi: ExtensionAPI, root: string, feature: WorkflowTask) {
+async function featureOwnedFiles(pi: ExtensionAPI, root: string, featureId: string) {
 	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--json"])).tasks as WorkflowTaskSummary[];
-	const leaves = await Promise.all(featureLeaves(tasks, feature.id).map(async ({ id }) => JSON.parse(await runBacklog(pi, root, ["task", "view", id, "--json"])).task as WorkflowTask));
-	const files = [...new Set(leaves.flatMap((task) => task.modifiedFiles ?? []).filter((file) => recordedPath(root, file)))];
+	const leaves = await Promise.all(featureLeaves(tasks, featureId).map(async ({ id }) => JSON.parse(await runBacklog(pi, root, ["task", "view", id, "--json"])).task as WorkflowTask));
+	return { leaves, files: [...new Set(leaves.flatMap((task) => task.modifiedFiles ?? []).filter((file) => recordedPath(root, file)))] };
+}
+
+async function finalFeatureReport(pi: ExtensionAPI, root: string, feature: WorkflowTask, staged = false) {
+	const { leaves, files } = await featureOwnedFiles(pi, root, feature.id);
 	let diff = "No modified files were recorded.";
 	if (files.length) {
-		const result = await pi.exec("git", ["diff", "--no-ext-diff", "--", ...files], { cwd: root, timeout: 30_000 });
+		const result = await pi.exec("git", ["diff", "--no-ext-diff", ...(staged ? ["--cached"] : []), "--", ...files], { cwd: root, timeout: 30_000 });
 		if (result.code !== 0) throw new Error(result.stderr.trim() || "Could not create scoped Git diff.");
-		diff = result.stdout.trim() || "No tracked changes in recorded files.";
+		diff = result.stdout.trim() || `No ${staged ? "staged" : "tracked"} changes in recorded files.`;
 	}
 	const reconciliation = feature.comments?.filter((comment) => comment.author === "@reconciler").at(-1)?.body ?? "No reconciliation evidence found.";
 	return boundedOutput([
@@ -371,18 +375,65 @@ async function finalFeatureReport(pi: ExtensionAPI, root: string, feature: Workf
 		"## Checks", ...leaves.map((task) => `### ${task.id}\n${task.implementationNotes ?? "No check evidence recorded."}`),
 		"## Review evidence", ...leaves.flatMap((task) => task.comments?.filter((comment) => comment.author === "@reviewer").map((comment) => `### ${task.id}\n${comment.body}`) ?? []),
 		"## Reconciliation", reconciliation,
+		staged ? "## Staged owned files\n" + (files.length ? files.map((file) => `- ${file}`).join("\n") : "- None") : "",
 		"## Scoped diff", diff,
-	].join("\n\n")).text;
+	].filter(Boolean).join("\n\n")).text;
+}
+
+async function indexTree(pi: ExtensionAPI, root: string) {
+	const result = await pi.exec("git", ["write-tree"], { cwd: root, timeout: 30_000 });
+	if (result.code !== 0) throw new Error(result.stderr.trim() || "Could not inspect the Git index.");
+	return result.stdout.trim();
+}
+
+async function stageFeatureFiles(pi: ExtensionAPI, root: string, files: string[]) {
+	const index = await pi.exec("git", ["diff", "--cached", "--quiet"], { cwd: root, timeout: 30_000 });
+	if (index.code === 1) throw new Error("Git index already contains staged changes; review and commit or unstage them first.");
+	if (index.code !== 0) throw new Error(index.stderr.trim() || "Could not inspect the Git index.");
+	if (!files.length) return undefined;
+	const added = await pi.exec("git", ["add", "--", ...files], { cwd: root, timeout: 30_000 });
+	if (added.code !== 0) throw new Error(added.stderr.trim() || "Could not stage recorded feature files.");
+	const staged = await pi.exec("git", ["diff", "--cached", "--quiet"], { cwd: root, timeout: 30_000 });
+	if (staged.code === 1) return indexTree(pi, root);
+	if (staged.code !== 0) throw new Error(staged.stderr.trim() || "Could not inspect staged feature files.");
+	return undefined;
+}
+
+async function unstageFeatureFiles(pi: ExtensionAPI, root: string, files: string[]) {
+	if (files.length) await pi.exec("git", ["restore", "--staged", "--", ...files], { cwd: root, timeout: 30_000 });
 }
 
 async function approveFeature(pi: ExtensionAPI, root: string, feature: WorkflowTask, ctx: any) {
 	if (!ctx.hasUI) return false;
-	const approved = await ctx.ui.confirm(`Complete feature ${feature.id}?`, await finalFeatureReport(pi, root, feature));
-	if (!approved) return false;
-	const args = ["task", "edit", feature.id, "--status", "Done", "--comment", "## Final feature approval\nApproved after reviewing the final summary, checks, review evidence, reconciliation, and scoped diff.", "--comment-author", "@human"];
-	for (const criterion of feature.acceptanceCriteria) args.push("--check-ac", String(criterion.index));
-	await runBacklog(pi, root, args);
-	return true;
+	const { files } = await featureOwnedFiles(pi, root, feature.id);
+	let stagedTree: string | undefined;
+	try {
+		stagedTree = await stageFeatureFiles(pi, root, files);
+		const approved = await ctx.ui.confirm(`Approve${stagedTree ? " and commit" : ""} feature ${feature.id}?`, await finalFeatureReport(pi, root, feature, !!stagedTree));
+		if (!approved) {
+			await unstageFeatureFiles(pi, root, files);
+			const feedback = await ctx.ui.input(`Final review feedback: ${feature.id}`, "Optional: ask a question or describe a requested change. The feature will remain In Review.");
+			if (feedback?.trim()) {
+				await runBacklog(pi, root, ["task", "edit", feature.id, "--comment", `## Final review feedback\n${feedback.trim()}`, "--comment-author", "@human"]);
+				pi.sendUserMessage(`The human declined final approval for Backlog.md feature ${feature.id} and left this feedback:\n\n${feedback.trim()}\n\nDiscuss it before changing anything. If the human explicitly requests a change, record it on the affected leaf and rerun the feature workflow.`);
+			}
+			return false;
+		}
+		let commit = "No recorded file changes to commit.";
+		if (stagedTree) {
+			if (await indexTree(pi, root) !== stagedTree) throw new Error("Git index changed after final review; no commit was made.");
+			const result = await pi.exec("git", ["commit", "-m", `Complete ${feature.id}: ${feature.title ?? "Untitled"}`], { cwd: root, timeout: 30_000 });
+			if (result.code !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || "Could not commit staged feature files.");
+			commit = (await pi.exec("git", ["rev-parse", "--short", "HEAD"], { cwd: root, timeout: 30_000 })).stdout.trim();
+		}
+		const args = ["task", "edit", feature.id, "--status", "Done", "--comment", `## Final feature approval\nApproved after reviewing the final summary, checks, review evidence, reconciliation, and staged scoped diff.\n\nCommit: ${commit}`, "--comment-author", "@human"];
+		for (const criterion of feature.acceptanceCriteria) args.push("--check-ac", String(criterion.index));
+		await runBacklog(pi, root, args);
+		return true;
+	} catch (error) {
+		if (stagedTree) await unstageFeatureFiles(pi, root, files);
+		throw error;
+	}
 }
 
 function reworkAttempts(task: WorkflowTask) {
@@ -682,10 +733,8 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 					taskId = await runnableFeatureTask(pi, root, requestedId) ?? "";
 					if (!taskId) {
 						if (!await featureReadyForReconciliation(pi, root, requestedId)) return void ctx.ui.notify(`${requestedId}: no runnable descendant leaf tasks`, "info");
-						if (requestedTask.status !== "In Review" || !requestedTask.comments?.some((comment) => comment.author === "@reconciler")) {
-							const outcome = await reconcileFeature(pi, root, requestedId, ctx);
-							if (outcome !== "completed") return void ctx.ui.notify(`${requestedId}: Needs Human`, "warning");
-						}
+						const outcome = await reconcileFeature(pi, root, requestedId, ctx);
+						if (outcome !== "completed") return void ctx.ui.notify(`${requestedId}: Needs Human`, "warning");
 						const feature = JSON.parse(await runBacklog(pi, root, ["task", "view", requestedId, "--json"])).task as WorkflowTask;
 						const approved = await approveFeature(pi, root, feature, ctx);
 						return void ctx.ui.notify(`${requestedId}: ${approved ? "Done" : ctx.hasUI ? "awaiting final human approval" : "final human approval requires interactive mode"}`, approved ? "success" : "warning");

@@ -57,7 +57,7 @@ A `task` may move to `Done` only when all of the following are persisted in Back
 5. The implementation summary, modified files, and check/review evidence are recorded.
 6. No unresolved dependency, blocker, or human request remains.
 
-A `feature` or `sub-feature` may move to `Done` only after all descendant tasks are `Done` and its own acceptance criteria are met. A feature additionally requires reconciliation and explicit final human approval. This contract does not require a Git commit; final commits remain optional and use explicitly owned paths.
+A `feature` or `sub-feature` may move to `Done` only after all descendant tasks are `Done` and its own acceptance criteria are met. A feature additionally requires reconciliation and explicit final human approval. When recorded descendant changes stage successfully, that approval also authorizes one final commit using explicitly owned paths; a feature with no staged recorded changes has no commit to make.
 
 Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range, defining a multi-controller workflow, or implementing the commands governed by this contract.
 
@@ -82,6 +82,7 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 - [x] Refinement contract tests prove that unapproved drafts create no tasks, approved drafts record published ticket IDs before archiving, and valid incoming handoffs preserve their source format and move to `processed/` only after publication.
 - [x] Implementation contract tests prove `Needs Human` assigns `@human`, blocked and human-owned tasks are not selected, rework is selected before ordinary open work, and `Done` requires persisted evidence.
 - [x] Review contract tests prove reviewer evidence is persisted, two rework attempts rerun the implementer, and the cap assigns `@human` with diagnostics.
+- [x] Final approval stages and commits only validated recorded descendant paths; pre-existing or post-review index changes abort the commit, and declined approval may retain human feedback for discussion.
 - [x] `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs` passes.
 
 ## Alternatives Considered
@@ -118,4 +119,6 @@ Revisit this contract if Backlog.md cannot represent the required configuration 
 
 2026-09-04: After an approved review has been persisted, the controller moves the leaf to `Done`; it does not treat `In Review` as complete. Once every descendant leaf is `Done`, a read-only reconciler checks parent acceptance criteria, affected documentation, durable technical decisions, and related Backlog.md tickets. It persists clean reconciliation evidence on the feature and leaves the feature `In Review` until the separate final human-approval step is implemented.
 
-2026-09-04: The final approval step presents the human with feature and leaf summaries, persisted check and review evidence, reconciliation evidence, and `git diff --no-ext-diff` scoped exclusively to recorded descendant modified files within the project root. Declining retains `In Review`; approval records an `@human` comment, marks feature acceptance criteria complete, and moves the feature to `Done`. Non-interactive runs retain `In Review`; optional commits remain out of scope.
+2026-09-04: The final approval step presents the human with feature and leaf summaries, persisted check and review evidence, reconciliation evidence, and `git diff --no-ext-diff` scoped exclusively to recorded descendant modified files within the project root. Declining retains `In Review`; approval records an `@human` comment, marks feature acceptance criteria complete, and moves the feature to `Done`. Non-interactive runs retain `In Review`.
+
+2026-09-04: Final human approval is the commit authorization; a second commit prompt is redundant. Before presenting approval, the controller rejects a non-empty index, stages only validated recorded descendant paths, and shows the cached diff and staged-path list. It verifies the index tree is unchanged after review before committing, so unrelated or post-review staging aborts the commit. A declined review unstages controller-owned paths and may persist feedback for main-session discussion; feedback does not itself request rework. The controller reruns reconciliation whenever a completed feature returns for final review, including after explicit rework.
