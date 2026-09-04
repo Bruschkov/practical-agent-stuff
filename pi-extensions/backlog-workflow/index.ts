@@ -10,6 +10,7 @@ import {
 	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import { implementerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
 
 export { implementerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
 
@@ -70,6 +71,18 @@ type BacklogInput = Static<typeof BACKLOG_SCHEMA>;
 type ProposedTask = Static<typeof PROPOSED_TASK_SCHEMA>;
 type IncomingHandoff = { filePath: string; title: string; content: string };
 type HandoffInbox = { status: string; handoffs: IncomingHandoff[]; processedDir?: string };
+type WorkflowTask = {
+	id: string; status: string; type: string; isReady: boolean; subtasks: unknown[];
+	readiness?: { isBlocked?: boolean };
+	acceptanceCriteria: { index: number; text: string }[];
+};
+type ImplementationEvidence = {
+	summary: string; plan: string[]; modifiedFiles: string[];
+	acceptanceCriteria: { criterion: string; status: "met" | "unmet"; evidence: string; index: number }[];
+	checks: { command: string; status: "passed" | "failed" | "not_run"; evidence: string }[];
+	documentation: { impact: "none" | "updated" | "needs_human"; evidence: string };
+	blockers: string[];
+};
 
 function yamlValue(value: string) {
 	return JSON.stringify(value);
@@ -212,6 +225,50 @@ async function runBacklog(pi: ExtensionAPI, root: string, args: string[]) {
 	const output = `${result.stdout}${result.stderr ? `${result.stdout ? "\n" : ""}${result.stderr}` : ""}`.trim();
 	if (result.code !== 0) throw new Error(output || `backlog ${args.join(" ")} failed.`);
 	return output;
+}
+
+function implementationEvidence(output: string, task: WorkflowTask): ImplementationEvidence {
+	let value: any;
+	try { value = JSON.parse(output); } catch { throw new Error("Worker did not return its required JSON evidence."); }
+	if (!value || typeof value !== "object" || typeof value.summary !== "string" || !Array.isArray(value.plan) || !Array.isArray(value.modifiedFiles) || !Array.isArray(value.acceptanceCriteria) || !Array.isArray(value.checks) || !Array.isArray(value.blockers) || !value.documentation) throw new Error("Worker returned incomplete JSON evidence.");
+	if (![value.plan, value.modifiedFiles, value.blockers].every((items) => items.every((item: unknown) => typeof item === "string")) || !["none", "updated", "needs_human"].includes(value.documentation.impact) || typeof value.documentation.evidence !== "string") throw new Error("Worker returned invalid JSON evidence.");
+	const used = new Set<number>();
+	const acceptanceCriteria = value.acceptanceCriteria.map((item: any) => {
+		if (!item || typeof item.criterion !== "string" || !["met", "unmet"].includes(item.status) || typeof item.evidence !== "string") throw new Error("Worker returned invalid acceptance-criteria evidence.");
+		const index = task.acceptanceCriteria.findIndex((criterion) => criterion.text === item.criterion && !used.has(criterion.index));
+		if (index < 0) throw new Error(`Worker reported an unknown acceptance criterion: ${item.criterion}`);
+		used.add(task.acceptanceCriteria[index].index);
+		return { ...item, index: task.acceptanceCriteria[index].index };
+	});
+	const checks = value.checks.map((item: any) => {
+		if (!item || typeof item.command !== "string" || !["passed", "failed", "not_run"].includes(item.status) || typeof item.evidence !== "string") throw new Error("Worker returned invalid check evidence.");
+		return item;
+	});
+	return { ...value, acceptanceCriteria, checks };
+}
+
+function completedEvidence(evidence: ImplementationEvidence, task: WorkflowTask) {
+	return task.acceptanceCriteria.every((criterion) => evidence.acceptanceCriteria.some((item) => item.index === criterion.index && item.status === "met")) && evidence.checks.every((check) => check.status === "passed");
+}
+
+async function persistImplementation(pi: ExtensionAPI, root: string, task: WorkflowTask, evidence: ImplementationEvidence, result: { outcome: string; usage: unknown }, status: string) {
+	const notes = [
+		`Worker outcome: ${result.outcome}`,
+		"## Acceptance criteria",
+		...evidence.acceptanceCriteria.map((criterion) => `- ${criterion.status}: ${criterion.criterion}\n  ${criterion.evidence}`),
+		"## Checks",
+		...evidence.checks.map((check) => `- ${check.status}: ${check.command}\n  ${check.evidence}`),
+		"## Documentation",
+		`${evidence.documentation.impact}: ${evidence.documentation.evidence}`,
+		"## Blockers",
+		...(evidence.blockers.length ? evidence.blockers.map((blocker) => `- ${blocker}`) : ["- None"]),
+		"## Usage",
+		JSON.stringify(result.usage),
+	].join("\n");
+	const args = ["task", "edit", task.id, "--status", status, "--plan", evidence.plan.map((step) => `- ${step}`).join("\n"), "--notes", notes, "--final-summary", evidence.summary];
+	for (const file of evidence.modifiedFiles) args.push("--modified-file", file);
+	for (const criterion of evidence.acceptanceCriteria.filter((item) => item.status === "met")) args.push("--check-ac", String(criterion.index));
+	await runBacklog(pi, root, args);
 }
 
 function handoffFromFile(filePath: string, content: string): IncomingHandoff | null {
@@ -396,6 +453,41 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				ctx.ui.notify("Backlog.md workflow is ready", "success");
 			} catch (error: any) {
 				ctx.ui.notify(`workflow-init failed: ${error?.message ?? String(error)}`, "error");
+			}
+		},
+	});
+
+	pi.registerCommand("implement-run", {
+		description: "Run one ready leaf task in an isolated implementation worker",
+		handler: async (args, ctx) => {
+			const taskId = args.trim();
+			if (!taskId) return void ctx.ui.notify("implement-run requires a task ID", "error");
+			const root = await projectRoot(pi, ctx.cwd);
+			let started = false;
+			try {
+				const task = JSON.parse(await runBacklog(pi, root, ["task", "view", taskId, "--json"])).task as WorkflowTask;
+				if (task.type !== "task" || task.status !== "Open" || !task.isReady || task.readiness?.isBlocked || task.subtasks.length) throw new Error(`${taskId} is not a ready, unblocked leaf task.`);
+				await runBacklog(pi, root, ["task", "edit", task.id, "--status", "In Progress", "--comment", "Implementation worker started.", "--comment-author", "@workflow"]);
+				started = true;
+				const result = await runChildPi({
+					cwd: root,
+					prompt: implementerPrompt(task.id),
+					model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+					thinkingLevel: ctx.thinkingLevel,
+				});
+				if (result.failure || !result.outcome) throw new Error(result.failure || "Worker did not return an outcome.");
+				const evidence = implementationEvidence(result.output, task);
+				if (result.outcome === "completed" && !completedEvidence(evidence, task)) throw new Error("Worker marked completion without meeting every criterion and check.");
+				const status = result.outcome === "completed" ? "In Review" : result.outcome === "blocked" ? "Blocked" : result.outcome === "needs_human" ? "Needs Human" : "Open";
+				await persistImplementation(pi, root, task, evidence, result, status);
+				ctx.ui.notify(`${task.id}: ${status}`, result.outcome === "completed" ? "success" : "warning");
+			} catch (error: any) {
+				if (started) {
+					try {
+						await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Open", "--comment", `Implementation failed: ${error?.message ?? String(error)}`, "--comment-author", "@workflow"]);
+					} catch { /* Preserve the original failure when recovery also fails. */ }
+				}
+				ctx.ui.notify(`implement-run failed: ${error?.message ?? String(error)}`, "error");
 			}
 		},
 	});

@@ -22,7 +22,7 @@
 - [x] Add an isolated child-Pi runner based on Pi's subagent pattern: JSON event parsing, project cwd/context inheritance, cancellation, bounded output, usage capture, and failure reporting.
 - [x] Bonus: inherit installed `backlog-handoff` into implementation workers so they can route discovered cross-project work.
 - [x] Add the implementer worker prompt: read the ticket and project instructions, implement minimally, run required checks, assess documentation impact, and return structured evidence.
-- [ ] Implement `/implement-run <task-id>` for one ready, unblocked leaf task and persist its plan, notes, modified files, acceptance-criteria progress, and final summary through Backlog.md.
+- [x] Implement `/implement-run <task-id>` for one ready, unblocked leaf task and persist its plan, notes, modified files, acceptance-criteria progress, and final summary through Backlog.md.
 - [ ] Add an end-to-end test with fake Pi output proving successful completion, malformed-result failure, and blocked-task refusal.
 
 ## Phase 4 — Review, rework, and HITL
