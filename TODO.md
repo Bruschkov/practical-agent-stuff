@@ -48,11 +48,8 @@
 - [x] Implement optional final commit using explicitly owned paths only; never use `git add -A`.
 - [x] Commit published refinement backlog changes through controller-owned Git operations, preserve staged implementation files, and provide scoped commit recovery without republishing.
 - [x] Document installation, `/workflow-init`, `/refine`, `/implement-run`, `/workflow-inbox`, configuration requirements, recovery, and current single-controller limitation.
-- [ ] Run existing repository contract tests plus the new workflow-extension tests.
+- [x] Migrate backlog-handoff to the current Pi package namespace, then run existing repository contract tests plus the workflow-extension tests.
 
-## Phase 7 Documentation
-- to refine with the user
-- architecture
-- intended workflows
-- commands and their use
-- best practice
+## Phase 7 — Documentation
+
+- [ ] Refine with the user the documentation scope: architecture, intended workflows, commands, and best practices.

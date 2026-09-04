@@ -4,7 +4,7 @@ Versioned coding-agent assets used selectively across projects.
 ## Stack
 - Markdown for skills/prompts/docs.
 - TypeScript for Pi extensions and OpenCode plugins.
-- Node.js built-in test runner for contract tests.
+- Node.js built-in test runner for contract tests; Pi extensions target `@earendil-works/pi-coding-agent`.
 
 ## Build & Test
 - Tests: `node --test tests/pi-extensions/*/contract.test.mjs`.

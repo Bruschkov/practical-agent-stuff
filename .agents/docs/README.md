@@ -25,5 +25,5 @@ Repo operating manual for future coding agents.
 - Do not store secrets, scratch notes, generated dumps, or generic framework advice.
 
 ## Verification
-- Test extension contracts: `node --test tests/pi-extensions/*/contract.test.mjs` (handoff suite currently needs the Pi package-import migration)
+- Test extension contracts: `node --test tests/pi-extensions/*/contract.test.mjs`. The handoff harness resolves the globally installed `@earendil-works/pi-coding-agent` package via `npm root -g`.
 - Check links after doc changes: inspect all relative links in touched markdown.

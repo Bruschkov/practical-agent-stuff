@@ -1,4 +1,4 @@
-import { withFileMutationQueue, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { withFileMutationQueue, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as syncFs from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";

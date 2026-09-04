@@ -13,12 +13,12 @@ let cachedHarnessPromise;
 
 function getPiInstallPaths() {
 	const npmRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
-	const piRoot = path.join(npmRoot, "@mariozechner", "pi-coding-agent");
+	const piRoot = path.join(npmRoot, "@earendil-works", "pi-coding-agent");
 	return {
 		piRoot,
 		piEntry: pathToFileURL(path.join(piRoot, "dist", "index.js")).href,
 		typeboxEntry: pathToFileURL(path.join(piRoot, "node_modules", "typebox", "build", "index.mjs")).href,
-		aiEntry: pathToFileURL(path.join(piRoot, "node_modules", "@mariozechner", "pi-ai", "dist", "index.js")).href,
+		aiEntry: pathToFileURL(path.join(piRoot, "node_modules", "@earendil-works", "pi-ai", "dist", "index.js")).href,
 		wrapEntry: pathToFileURL(path.join(piRoot, "dist", "core", "tools", "tool-definition-wrapper.js")).href,
 	};
 }
@@ -28,7 +28,7 @@ async function createBacklogHandoffHarness(options = {}) {
 	const { piEntry, typeboxEntry, aiEntry, wrapEntry } = getPiInstallPaths();
 	const source = await readFile(extensionSourcePath, "utf8");
 	const patchedSource = source
-		.replace('from "@mariozechner/pi-coding-agent"', `from ${JSON.stringify(piEntry)}`)
+		.replace('from "@earendil-works/pi-coding-agent"', `from ${JSON.stringify(piEntry)}`)
 		.replace('from "typebox"', `from ${JSON.stringify(typeboxEntry)}`);
 	const tempDir = await mkdtemp(path.join(os.tmpdir(), "backlog-handoff-test-module-"));
 	const tempModulePath = path.join(tempDir, "index.ts");
