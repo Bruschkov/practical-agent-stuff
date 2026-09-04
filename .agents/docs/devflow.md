@@ -61,6 +61,15 @@
 - `/devflow-inbox` is a manual recovery entry point, not a required daemon or dedicated session. From any interactive Pi session, it lists `Needs Human` tickets, lets the user select one, and shows its latest persisted `@workflow` request.
 - A non-empty response is recorded as an `@human` comment, clears `@human`, and reopens the ticket to `Open`. Cancelling or submitting no response leaves it in `Needs Human`; rerun `/implement-run` when no active feature controller remains to resume it.
 
+## Planned reliability fixes
+
+Not implemented; see `TODO.md` Phase 9 before changing controller flow.
+
+- The session running `/implement-run` must remain busy, show its current task/phase, and accept only cancellation or status checks until its controller settles. This is session-local: separate refinement and inbox sessions remain usable.
+- `Needs Human` must be a same-session dialogue, not a context-free one-shot prompt. Every turn shows the task, unresolved question, relevant evidence, and available options; persist each reply. Only explicit human confirmation resumes the controller.
+- Reload, cancellation, and child-process failure must never leave a ticket stranded in `In Progress`.
+- Reconciliation must update completed sub-features from validated leaf evidence before requesting final feature approval. Do not ask the human to infer or manually apply parent statuses.
+
 ## Workflow configuration
 - The required types, statuses, priorities, refinement approval boundary, HITL handling, and Definition of Done are defined by [Adopt a Backlog.md workflow contract](decisions/2026-09-03-adopt-backlog-workflow-contract.md).
 - `/devflow-init` is interactive and requires Git. It operates at the Git top level, initializes an absent Backlog.md project only after confirmation, and reconfirms before changing an existing configuration.

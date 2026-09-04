@@ -788,7 +788,9 @@ export default function devflowExtension(pi: ExtensionAPI) {
 				const implement = async (rework = false) => {
 					await runBacklog(pi, root, ["task", "edit", task.id, "--status", "In Progress", "--comment", rework ? `Rework implementation worker started (attempt ${attempt} of ${maxReworkAttempts}).` : "Implementation worker started.", "--comment-author", "@workflow"]);
 					started = true;
-					const result = await runChildPi({ cwd: root, prompt: implementerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel });
+					ctx.ui.notify(`${task.id}: implementation started`, "info");
+					ctx.ui.setStatus("devflow", `${task.id}: implementing`);
+					const result = await runChildPi({ cwd: root, prompt: implementerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel }).finally(() => ctx.ui.setStatus("devflow", undefined));
 					if (result.failure || !result.outcome) throw new Error(result.failure || "Worker did not return an outcome.");
 					const evidence = implementationEvidence(result.output, task);
 					if (result.outcome === "completed" && !completedEvidence(evidence, task)) throw new Error("Worker marked completion without meeting every criterion and check.");
@@ -809,7 +811,8 @@ export default function devflowExtension(pi: ExtensionAPI) {
 					return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
 				}
 				while (true) {
-					const review = await runChildPi({ cwd: root, prompt: reviewerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel, readOnly: true });
+					ctx.ui.setStatus("devflow", `${task.id}: reviewing`);
+					const review = await runChildPi({ cwd: root, prompt: reviewerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel, readOnly: true }).finally(() => ctx.ui.setStatus("devflow", undefined));
 					if (review.failure || !review.outcome) {
 						ctx.ui.notify(`${task.id}: review failed: ${review.failure || "Worker did not return an outcome."}`, "error");
 						if (requestedTask.type === "feature") return implementRun(requestedId, ctx);

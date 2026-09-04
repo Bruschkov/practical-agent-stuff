@@ -92,8 +92,10 @@ async function registeredTools(exec = async () => ({ stdout: "", stderr: "", cod
 
 function commandContext(cwd, confirm = async () => true, input = async () => undefined, select = async () => undefined) {
 	const notifications = [];
+	const statuses = [];
 	return {
 		notifications,
+		statuses,
 		ctx: {
 			hasUI: true,
 			cwd,
@@ -103,6 +105,9 @@ function commandContext(cwd, confirm = async () => true, input = async () => und
 				select,
 				notify(message, level) {
 					notifications.push({ message, level });
+				},
+				setStatus(_key, text) {
+					statuses.push(text);
 				},
 			},
 		},
@@ -353,7 +358,10 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	await commands.get("devflow-init").handler("", commandContext(project).ctx);
 	const command = commands.get("implement-run");
 	const taskId = createdId(await cli(project, "task", "create", "Implement", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
-	await command.handler(taskId, commandContext(project).ctx);
+	const startedRun = commandContext(project);
+	await command.handler(taskId, startedRun.ctx);
+	assert.ok(startedRun.notifications.some(({ message }) => message === `${taskId}: implementation started`));
+	assert.deepEqual(startedRun.statuses, [`${taskId}: implementing`, undefined, `${taskId}: reviewing`, undefined]);
 	const task = JSON.parse(await cli(project, "task", "view", taskId, "--json")).task;
 	assert.equal(task.status, "Done");
 	assert.equal(task.implementationPlan, "- Change code");
