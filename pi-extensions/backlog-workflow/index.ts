@@ -32,6 +32,7 @@ const operations = [
 	"draft_list", "draft_view", "draft_create", "draft_edit", "draft_archive", "draft_promote", "refinement_publish",
 ] as const;
 const completeOutcomes = ["completed", "needs_human", "blocked", "failed"] as const;
+const maxReworkAttempts = 2;
 const PROPOSED_TASK_SCHEMA = Type.Object({
 	key: Type.String({ minLength: 1, description: "Unique proposal-local task key." }),
 	title: Type.String({ minLength: 1, description: "Ticket title." }),
@@ -75,6 +76,7 @@ type WorkflowTask = {
 	id: string; status: string; type: string; isReady: boolean; subtasks: unknown[];
 	readiness?: { isBlocked?: boolean };
 	acceptanceCriteria: { index: number; text: string }[];
+	comments?: { body: string; author: string }[];
 };
 type ImplementationEvidence = {
 	summary: string; plan: string[]; modifiedFiles: string[];
@@ -83,6 +85,7 @@ type ImplementationEvidence = {
 	documentation: { impact: "none" | "updated" | "needs_human"; evidence: string };
 	blockers: string[];
 };
+type ReviewEvidence = { verdict: "approved" | "rework"; findings: string[] };
 
 function yamlValue(value: string) {
 	return JSON.stringify(value);
@@ -249,6 +252,22 @@ function implementationEvidence(output: string, task: WorkflowTask): Implementat
 
 function completedEvidence(evidence: ImplementationEvidence, task: WorkflowTask) {
 	return task.acceptanceCriteria.every((criterion) => evidence.acceptanceCriteria.some((item) => item.index === criterion.index && item.status === "met")) && evidence.checks.every((check) => check.status === "passed");
+}
+
+function reviewEvidence(output: string): ReviewEvidence {
+	let value: any;
+	try { value = JSON.parse(output); } catch { throw new Error("Reviewer did not return its required JSON evidence."); }
+	if (!value || !["approved", "rework"].includes(value.verdict) || !Array.isArray(value.findings) || !value.findings.every((finding: unknown) => typeof finding === "string") || (value.verdict === "approved" && value.findings.length) || (value.verdict === "rework" && !value.findings.length)) throw new Error("Reviewer returned invalid JSON evidence.");
+	return value;
+}
+
+async function persistReview(pi: ExtensionAPI, root: string, task: WorkflowTask, review: ReviewEvidence) {
+	const comment = ["## Automated review", `Verdict: ${review.verdict}`, "## Findings", ...(review.findings.length ? review.findings.map((finding) => `- ${finding}`) : ["- None"])].join("\n");
+	await runBacklog(pi, root, ["task", "edit", task.id, "--comment", comment, "--comment-author", "@reviewer"]);
+}
+
+function reworkAttempts(task: WorkflowTask) {
+	return Math.max(0, ...(task.comments ?? []).filter((comment) => comment.author === "@workflow").map((comment) => Number(comment.body.match(new RegExp(`Rework attempt: (\\d+)/${maxReworkAttempts}`))?.[1]) || 0));
 }
 
 async function persistImplementation(pi: ExtensionAPI, root: string, task: WorkflowTask, evidence: ImplementationEvidence, result: { outcome: string; usage: unknown }, status: string) {
@@ -467,31 +486,36 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 			try {
 				const task = JSON.parse(await runBacklog(pi, root, ["task", "view", taskId, "--json"])).task as WorkflowTask;
 				if (task.type !== "task" || task.status !== "Open" || !task.isReady || task.readiness?.isBlocked || task.subtasks.length) throw new Error(`${taskId} is not a ready, unblocked leaf task.`);
-				await runBacklog(pi, root, ["task", "edit", task.id, "--status", "In Progress", "--comment", "Implementation worker started.", "--comment-author", "@workflow"]);
-				started = true;
-				const result = await runChildPi({
-					cwd: root,
-					prompt: implementerPrompt(task.id),
-					model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
-					thinkingLevel: ctx.thinkingLevel,
-				});
-				if (result.failure || !result.outcome) throw new Error(result.failure || "Worker did not return an outcome.");
-				const evidence = implementationEvidence(result.output, task);
-				if (result.outcome === "completed" && !completedEvidence(evidence, task)) throw new Error("Worker marked completion without meeting every criterion and check.");
-				const status = result.outcome === "completed" ? "In Review" : result.outcome === "blocked" ? "Blocked" : result.outcome === "needs_human" ? "Needs Human" : "Open";
-				await persistImplementation(pi, root, task, evidence, result, status);
-				started = false;
-				if (result.outcome !== "completed") return void ctx.ui.notify(`${task.id}: ${status}`, "warning");
+				let attempt = reworkAttempts(task);
+				const implement = async (rework = false) => {
+					await runBacklog(pi, root, ["task", "edit", task.id, "--status", "In Progress", "--comment", rework ? `Rework implementation worker started (attempt ${attempt} of ${maxReworkAttempts}).` : "Implementation worker started.", "--comment-author", "@workflow"]);
+					started = true;
+					const result = await runChildPi({ cwd: root, prompt: implementerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel });
+					if (result.failure || !result.outcome) throw new Error(result.failure || "Worker did not return an outcome.");
+					const evidence = implementationEvidence(result.output, task);
+					if (result.outcome === "completed" && !completedEvidence(evidence, task)) throw new Error("Worker marked completion without meeting every criterion and check.");
+					const status = result.outcome === "completed" ? "In Review" : result.outcome === "blocked" ? "Blocked" : result.outcome === "needs_human" ? "Needs Human" : "Open";
+					await persistImplementation(pi, root, task, evidence, result, status);
+					started = false;
+					return result.outcome === "completed";
+				};
 
-				const review = await runChildPi({
-					cwd: root,
-					prompt: reviewerPrompt(task.id),
-					model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
-					thinkingLevel: ctx.thinkingLevel,
-					readOnly: true,
-				});
-				if (review.failure || !review.outcome) return void ctx.ui.notify(`${task.id}: review failed: ${review.failure || "Worker did not return an outcome."}`, "error");
-				ctx.ui.notify(`${task.id}: In Review${review.outcome === "completed" ? "" : ` (${review.outcome})`}`, review.outcome === "completed" ? "success" : "warning");
+				if (!await implement()) return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
+				while (true) {
+					const review = await runChildPi({ cwd: root, prompt: reviewerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel, readOnly: true });
+					if (review.failure || !review.outcome) return void ctx.ui.notify(`${task.id}: review failed: ${review.failure || "Worker did not return an outcome."}`, "error");
+					if (review.outcome !== "completed") return void ctx.ui.notify(`${task.id}: In Review (${review.outcome})`, "warning");
+					const evidence = reviewEvidence(review.output);
+					await persistReview(pi, root, task, evidence);
+					if (evidence.verdict === "approved") return void ctx.ui.notify(`${task.id}: In Review`, "success");
+					if (attempt >= maxReworkAttempts) {
+						await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Needs Human", "--assignee", "@human", "--comment", `Rework cap reached after ${maxReworkAttempts} attempts. Review findings are recorded above.`, "--comment-author", "@workflow"]);
+						return void ctx.ui.notify(`${task.id}: Needs Human (rework cap reached)`, "warning");
+					}
+					attempt += 1;
+					await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Rework", "--comment", `Rework attempt: ${attempt}/${maxReworkAttempts}.`, "--comment-author", "@workflow"]);
+					if (!await implement(true)) return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
+				}
 			} catch (error: any) {
 				if (started) {
 					try {

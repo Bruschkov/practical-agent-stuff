@@ -168,6 +168,7 @@ test("worker prompts require ticket evidence or read-only review and a terminati
 	assert.match(prompt, /TASK-42/);
 	const review = reviewerPrompt("TASK-42");
 	assert.match(review, /read-only reviewer/);
+	assert.match(review, /"verdict": "approved"\|"rework"/);
 	assert.match(review, /Do not modify files, Backlog\.md, or Git state/);
 	assert.match(review, /complete_transition exactly once as your final action/);
 });
@@ -283,7 +284,9 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 		'const prompt = process.argv.at(-1);',
 		'writeFileSync(invocations, String(call + 1));',
 		'const evidence = { summary: "Implemented", plan: ["Change code"], modifiedFiles: ["index.ts"], acceptanceCriteria: [{ criterion: "Works", status: "met", evidence: "Checked" }], checks: [{ command: "node --test", status: "passed", evidence: "ok" }], documentation: { impact: "none", evidence: "No docs" }, blockers: [] };',
-		'const output = prompt.includes("read-only reviewer") ? "Review passed" : call ? "malformed" : JSON.stringify(evidence);',
+		'const review = prompt.includes("read-only reviewer");',
+		'const reviewEvidence = { verdict: call === 1 ? "approved" : "rework", findings: call === 1 ? [] : [`Required fix ${call}`] };',
+		'const output = review ? JSON.stringify(reviewEvidence) : call === 2 ? "malformed" : JSON.stringify(evidence);',
 		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: output }], usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } } }));',
 		'console.log(JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "complete_transition", details: { outcome: "completed" }, isError: false, content: [] } }));',
 	].join("\n"));
@@ -304,6 +307,7 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	assert.deepEqual(task.modifiedFiles, ["index.ts"]);
 	assert.equal(task.acceptanceCriteriaCompleted, 1);
 	assert.equal(task.finalSummary, "Implemented");
+	assert.match(task.comments.at(-1).body, /Verdict: approved/);
 
 	const malformedId = createdId(await cli(project, "task", "create", "Malformed", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
 	const malformedRun = commandContext(project);
@@ -317,7 +321,18 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	await command.handler(blockedId, blockedRun.ctx);
 	assert.match(blockedRun.notifications.at(-1).message, /not a ready, unblocked leaf task/);
 	assert.equal(JSON.parse(await cli(project, "task", "view", blockedId, "--json")).task.status, "Open");
-	assert.equal(await readFile(invocations, "utf8"), "3");
+
+	const reworkId = createdId(await cli(project, "task", "create", "Rework", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
+	await command.handler(reworkId, commandContext(project).ctx);
+	const rework = JSON.parse(await cli(project, "task", "view", reworkId, "--json")).task;
+	assert.equal(rework.status, "Needs Human");
+	assert.deepEqual(rework.assignees, ["@human"]);
+	const comments = rework.comments.map(({ body }) => body).join("\n");
+	assert.match(comments, /Verdict: rework/);
+	assert.match(comments, /Rework attempt: 1\/2/);
+	assert.match(comments, /Rework attempt: 2\/2/);
+	assert.match(comments, /Rework cap reached after 2 attempts/);
+	assert.equal(await readFile(invocations, "utf8"), "9");
 });
 
 test("refine creates or resumes a draft and continues in the main session", async (t) => {

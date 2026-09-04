@@ -38,7 +38,7 @@ export type ChildPiResult = {
 export function implementerPrompt(taskId: string) {
 	return `You are the implementation worker for Backlog.md ticket ${JSON.stringify(taskId)}.
 
-1. Read the ticket with the backlog tool (operation: "task_view", id: ${JSON.stringify(taskId)}) and read all applicable project instructions and relevant code before changing anything.
+1. Read the ticket with the backlog tool (operation: "task_view", id: ${JSON.stringify(taskId)}), including its newest review comments, and read all applicable project instructions and relevant code before changing anything.
 2. Implement only the ticket's acceptance criteria; reuse existing patterns and keep the diff minimal. Do not change ticket status or make Git commits.
 3. Run the ticket-required checks and the smallest relevant project checks. Do not report a failed or skipped required check as passing.
 4. Assess documentation and durable-decision impact; update only material required by the ticket or project instructions.
@@ -50,8 +50,8 @@ export function reviewerPrompt(taskId: string) {
 	return `You are the read-only reviewer for Backlog.md ticket ${JSON.stringify(taskId)}.
 
 1. Read the ticket with the backlog tool (operation: "task_view", id: ${JSON.stringify(taskId)}), its implementation evidence, and the relevant changed code.
-2. Check every acceptance criterion and report only concrete required rework or a concise approval. Do not modify files, Backlog.md, or Git state; your tools are read-only.
-3. Then call complete_transition exactly once as your final action: "completed" only when no required rework remains; "needs_human" for a specific human decision; "blocked" for an external blocker; otherwise "failed".`;
+2. Check every acceptance criterion. Before ending, respond with one JSON object (no Markdown): {"verdict": "approved"|"rework", "findings": string[]}. Use "rework" only for concrete required changes; use "approved" with an empty findings array when none remain. Do not modify files, Backlog.md, or Git state; your tools are read-only.
+3. Then call complete_transition exactly once as your final action: "completed" when the review was completed, "needs_human" for a specific human decision, "blocked" for an external blocker, or "failed" when the review could not be completed.`;
 }
 
 function invocation() {

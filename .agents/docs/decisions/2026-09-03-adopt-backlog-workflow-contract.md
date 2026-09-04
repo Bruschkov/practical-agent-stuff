@@ -81,6 +81,7 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 - [x] `/workflow-init` creates or reconciles a Backlog.md configuration containing exactly the specified task types, statuses, and priorities only after required confirmation; workflow-created tickets without a chosen priority receive explicit `Medium`.
 - [x] Refinement contract tests prove that unapproved drafts create no tasks, approved drafts record published ticket IDs before archiving, and valid incoming handoffs preserve their source format and move to `processed/` only after publication.
 - [ ] Implementation contract tests prove `Needs Human` assigns `@human`, blocked and human-owned tasks are not selected, rework is selected before ordinary open work, and `Done` requires persisted evidence.
+- [x] Review contract tests prove reviewer evidence is persisted, two rework attempts rerun the implementer, and the cap assigns `@human` with diagnostics.
 - [x] `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs` passes.
 
 ## Alternatives Considered
@@ -106,3 +107,5 @@ Revisit this contract if Backlog.md cannot represent the required configuration 
 2026-09-04: Verified `runChildPi` supplies the workflow extension without `--no-extensions`; Pi therefore discovers an installed project- or global-level `backlog-handoff` for the worker. No dependency, detection, adapter, or dedicated test is needed.
 
 2026-09-04: Automated review reuses the child-Pi runner in read-only mode rather than a separate executor. That mode allows only `read`, `grep`, `find`, `ls`, `backlog`, and `complete_transition`, sets `PI_BACKLOG_WORKFLOW_REVIEWER=1`, and rejects mutating `backlog` operations. The controller retains `In Review` until review evidence and any required rework are persisted; it must not move a task to `Done` first.
+
+2026-09-04: A completed reviewer run returns JSON with an `approved` or `rework` verdict and concrete findings; do not add another `complete_transition` outcome. The controller persists that evidence as an `@reviewer` comment. It immediately reruns `rework` through the implementer, allowing two persisted attempts. A third rework verdict pauses the ticket in `Needs Human`, assigns `@human`, and records the cap diagnostic.
