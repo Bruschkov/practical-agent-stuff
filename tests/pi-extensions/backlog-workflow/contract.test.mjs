@@ -467,13 +467,19 @@ test("implement-run processes every ready descendant leaf for a feature", async 
 	}
 });
 
-test("implement-run reconciles a feature only after every descendant leaf is Done", async (t) => {
+test("implement-run reconciles and requires final human approval after every descendant leaf is Done", async (t) => {
 	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
 	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-reconcile-feature-"));
 	const fakePi = path.join(project, "fake-pi.mjs");
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
 	await cli(project, "init", "Reconcile contract", "--defaults", "--integration-mode", "none");
+	await writeFile(path.join(project, "tracked.txt"), "before\n");
+	await run("git", ["config", "user.email", "test@example.com"], { cwd: project });
+	await run("git", ["config", "user.name", "Test"], { cwd: project });
+	await run("git", ["add", "tracked.txt"], { cwd: project });
+	await run("git", ["commit", "--quiet", "-m", "baseline"], { cwd: project });
+	await writeFile(path.join(project, "tracked.txt"), "after\n");
 	await writeFile(fakePi, [
 		'const output = JSON.stringify({ summary: "Reconciled", checks: ["parent acceptance criteria", "documentation", "technical decisions", "related tickets"].map((area) => ({ area, status: "passed", evidence: "Checked" })) });',
 		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: output }], usage: {} } }));',
@@ -487,12 +493,26 @@ test("implement-run reconciles a feature only after every descendant leaf is Don
 	await commands.get("workflow-init").handler("", commandContext(project).ctx);
 	const featureId = createdId(await cli(project, "task", "create", "Feature", "--type", "feature", "--priority", "Medium", "--ac", "Feature works"), "task");
 	const leafId = createdId(await cli(project, "task", "create", "Leaf", "--type", "task", "--priority", "Medium", "--parent", featureId, "--ac", "Leaf works"), "task");
-	await cli(project, "task", "edit", leafId, "--status", "Done");
-	await commands.get("implement-run").handler(featureId, commandContext(project).ctx);
+	await cli(project, "task", "edit", leafId, "--status", "Done", "--final-summary", "Leaf shipped", "--notes", "node --test: passed", "--modified-file", "tracked.txt", "--comment", "Verdict: approved", "--comment-author", "@reviewer");
+	await commands.get("implement-run").handler(featureId, commandContext(project, async () => false).ctx);
+	assert.equal(JSON.parse(await cli(project, "task", "view", featureId, "--json")).task.status, "In Review");
+	let approvalTitle = "";
+	let approvalReport = "";
+	const approval = commandContext(project, async (title, report) => {
+		approvalTitle = title;
+		approvalReport = report;
+		return true;
+	});
+	await commands.get("implement-run").handler(featureId, approval.ctx);
 	const feature = JSON.parse(await cli(project, "task", "view", featureId, "--json")).task;
-	assert.equal(feature.status, "In Review");
-	assert.equal(feature.comments.at(-1).author, "@reconciler");
-	assert.match(feature.comments.at(-1).body, /parent acceptance criteria/);
+	assert.equal(feature.status, "Done");
+	assert.match(approvalTitle, new RegExp(featureId));
+	assert.match(approvalReport, /Leaf shipped/);
+	assert.match(approvalReport, /node --test: passed/);
+	assert.match(approvalReport, /Verdict: approved/);
+	assert.match(approvalReport, /-before[\s\S]*\+after/);
+	assert.ok(feature.comments.some(({ author, body }) => author === "@reconciler" && /parent acceptance criteria/.test(body)));
+	assert.match(feature.comments.at(-1).body, /Final feature approval/);
 });
 
 test("feature selection follows hierarchy, dependency, priority, and resume JSON fixtures", async () => {
