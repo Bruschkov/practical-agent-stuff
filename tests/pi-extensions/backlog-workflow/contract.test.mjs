@@ -248,16 +248,21 @@ test("backlog tool uses structured operations, bounded output, and serialized wr
 	assert.match(truncated.content[0].text, /Output truncated/);
 });
 
-test("implement-run persists successful worker evidence and moves a ready leaf to review", async (t) => {
+test("implement-run handles fake-Pi success, malformed evidence, and blocked-task refusal", async (t) => {
 	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
 	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-implement-"));
 	const fakePi = path.join(project, "fake-pi.mjs");
+	const invocations = path.join(project, "worker-invocations");
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
 	await cli(project, "init", "Implement contract", "--defaults", "--integration-mode", "none");
 	await writeFile(fakePi, [
+		'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
+		`const invocations = ${JSON.stringify(invocations)};`,
+		'const call = existsSync(invocations) ? Number(readFileSync(invocations, "utf8")) : 0;',
+		'writeFileSync(invocations, String(call + 1));',
 		'const evidence = { summary: "Implemented", plan: ["Change code"], modifiedFiles: ["index.ts"], acceptanceCriteria: [{ criterion: "Works", status: "met", evidence: "Checked" }], checks: [{ command: "node --test", status: "passed", evidence: "ok" }], documentation: { impact: "none", evidence: "No docs" }, blockers: [] };',
-		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: JSON.stringify(evidence) }], usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } } }));',
+		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: call ? "malformed" : JSON.stringify(evidence) }], usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } } }));',
 		'console.log(JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "complete_transition", details: { outcome: "completed" }, isError: false, content: [] } }));',
 	].join("\n"));
 	const previousScript = process.argv[1];
@@ -265,12 +270,10 @@ test("implement-run persists successful worker evidence and moves a ready leaf t
 	t.after(() => { process.argv[1] = previousScript; });
 
 	const { commands } = await workflowHarness();
-	const init = commandContext(project);
-	await commands.get("workflow-init").handler("", init.ctx);
-	const taskId = createdId(await cli(project, "task", "create", "Implement", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
+	await commands.get("workflow-init").handler("", commandContext(project).ctx);
 	const command = commands.get("implement-run");
-	const runContext = commandContext(project);
-	await command.handler(taskId, runContext.ctx);
+	const taskId = createdId(await cli(project, "task", "create", "Implement", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
+	await command.handler(taskId, commandContext(project).ctx);
 	const task = JSON.parse(await cli(project, "task", "view", taskId, "--json")).task;
 	assert.equal(task.status, "In Review");
 	assert.equal(task.implementationPlan, "- Change code");
@@ -279,6 +282,20 @@ test("implement-run persists successful worker evidence and moves a ready leaf t
 	assert.deepEqual(task.modifiedFiles, ["index.ts"]);
 	assert.equal(task.acceptanceCriteriaCompleted, 1);
 	assert.equal(task.finalSummary, "Implemented");
+
+	const malformedId = createdId(await cli(project, "task", "create", "Malformed", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
+	const malformedRun = commandContext(project);
+	await command.handler(malformedId, malformedRun.ctx);
+	const malformed = JSON.parse(await cli(project, "task", "view", malformedId, "--json")).task;
+	assert.equal(malformed.status, "Open");
+	assert.match(malformed.comments.at(-1).body, /required JSON evidence/);
+
+	const blockedId = createdId(await cli(project, "task", "create", "Blocked", "--type", "task", "--priority", "Medium", "--ac", "Wait", "--depends-on", malformedId), "task");
+	const blockedRun = commandContext(project);
+	await command.handler(blockedId, blockedRun.ctx);
+	assert.match(blockedRun.notifications.at(-1).message, /not a ready, unblocked leaf task/);
+	assert.equal(JSON.parse(await cli(project, "task", "view", blockedId, "--json")).task.status, "Open");
+	assert.equal(await readFile(invocations, "utf8"), "2");
 });
 
 test("refine creates or resumes a draft and continues in the main session", async (t) => {
