@@ -8,11 +8,11 @@ decision-makers: Bruschkov
 
 ## Context and Problem Statement
 
-The backlog workflow is distributed as a Pi package. A system-wide Backlog.md install (for example, through Homebrew) can differ from the version the extension was developed and tested against. The workflow needs a stable JSON command boundary without coupling to Backlog.md's internal TypeScript API.
+Devflow is distributed as a Pi package. A system-wide Backlog.md install (for example, through Homebrew) can differ from the version the extension was developed and tested against. The workflow needs a stable JSON command boundary without coupling to Backlog.md's internal TypeScript API.
 
 ## Decision
 
-`pi-extensions/backlog-workflow/package.json` declares `backlog.md` as a runtime dependency at `^1.4.0`. The extension must invoke the package-local `backlog` CLI and consume its JSON output. It must not use a global Backlog.md executable or import Backlog.md internals.
+`pi-extensions/devflow/package.json` declares `backlog.md` as a runtime dependency at `^1.4.0`. The extension must invoke the package-local `backlog` CLI and consume its JSON output. It must not use a global Backlog.md executable or import Backlog.md internals.
 
 The `^1.4.0` range accepts compatible 1.x releases and excludes 2.x. `package-lock.json` records the resolved release used for the package. Pi installs runtime dependencies for npm and git packages; source-local development runs `npm install` in the package directory.
 
@@ -26,7 +26,7 @@ Non-goals: supporting Backlog.md 2.x, managing a system-wide Backlog.md installa
 
 ## Implementation Plan
 
-- **Affected paths**: `pi-extensions/backlog-workflow/package.json`, `pi-extensions/backlog-workflow/package-lock.json`, `pi-extensions/backlog-workflow/index.ts`, and `tests/pi-extensions/backlog-workflow/contract.test.mjs`.
+- **Affected paths**: `pi-extensions/devflow/package.json`, `pi-extensions/devflow/package-lock.json`, `pi-extensions/devflow/index.ts`, and `tests/pi-extensions/devflow/contract.test.mjs`.
 - **Dependencies**: `backlog.md` `^1.4.0`; `@earendil-works/pi-coding-agent` and `typebox` are `*` peer dependencies.
 - **Patterns to follow**: Pi package manifest declares `index.ts`; future wrapper code calls the CLI with `--json` and parses the command result.
 - **Patterns to avoid**: global executable lookup, direct Backlog.md API imports, and a strict exact dependency range.
@@ -34,7 +34,7 @@ Non-goals: supporting Backlog.md 2.x, managing a system-wide Backlog.md installa
 ### Verification
 
 - [x] Package manifest declares `backlog.md` `^1.4.0` and `index.ts` as its Pi extension.
-- [x] `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs` passes.
+- [x] `node --test tests/pi-extensions/devflow/contract.test.mjs` passes.
 - [x] The contract test invokes the package-local CLI in a temporary Git repository and verifies config lookup, task/draft CRUD, parent/dependency data, comments, assignments, and repeatable task JSON.
 - [x] One structured `backlog` Pi tool invokes the package-local binary, limits output, and serializes writes; its contract test passes.
 
@@ -50,4 +50,4 @@ Non-goals: supporting Backlog.md 2.x, managing a system-wide Backlog.md installa
 
 2026-09-04: The package exposes one structured `backlog` Pi tool rather than arbitrary CLI arguments. It uses the package-local binary, caps tool output at Pi's 2,000-line/50 KB limit, and serializes writes through the project's `backlog/` directory. `typebox` is a Pi peer dependency for its parameter schema.
 
-See [Backlog Workflow Package](../backlog-workflow.md).
+See [Devflow Package](../devflow.md).

@@ -8,7 +8,7 @@ decision-makers: Bruschkov
 
 ## Context and Problem Statement
 
-The backlog-workflow Pi package needs one shared vocabulary before it can initialize Backlog.md projects, refine ideas into tickets, run implementation workers, and resume work safely. Backlog.md itself supplies task and draft storage, but the package has not yet selected the statuses, hierarchy, priorities, completion rule, or human-in-the-loop behavior that its later commands must enforce.
+The devflow Pi package needs one shared vocabulary before it can initialize Backlog.md projects, refine ideas into tickets, run implementation workers, and resume work safely. Backlog.md itself supplies task and draft storage, but the package has not yet selected the statuses, hierarchy, priorities, completion rule, or human-in-the-loop behavior that its later commands must enforce.
 
 The package must use the package-local Backlog.md CLI and its supported command boundary, as required by [Use a package-local Backlog.md CLI](2026-09-03-use-package-local-backlog-cli.md). This decision defines workflow semantics only; it does not add a CLI wrapper or Pi commands.
 
@@ -48,7 +48,7 @@ Refinement uses a Backlog.md draft, not task statuses. An unarchived draft is ac
 
 The main-session refiner does not run Git. Controller code owns the refinement commit; the implementer controller separately stages only recorded implementation files at final feature approval. Do not add general same-worktree locks for the single-controller workflow. A staged-tree change aborts final feature approval for retry rather than allowing an unrelated commit.
 
-If the refinement commit fails after publication, leave the published backlog changes pending and the handoff in the inbox. Retry only the scoped backlog commit through `/workflow-commit-backlog`; do not rerun publication, which would duplicate tickets.
+If the refinement commit fails after publication, leave the published backlog changes pending and the handoff in the inbox. Retry only the scoped backlog commit through `/devflow-commit-backlog`; do not rerun publication, which would duplicate tickets.
 
 ### Definition of Done
 
@@ -67,27 +67,27 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 
 ## Consequences
 
-- `/workflow-init` can install or reconcile a single, deterministic project configuration.
+- `/devflow-init` can install or reconcile a single, deterministic project configuration.
 - `/refine` has an explicit approval boundary and one scoped backlog commit without inventing task states for unfinished ideas.
 - `/implement-run` can distinguish retryable rework, external blocks, and human questions without selecting non-runnable tickets.
 - Later controllers must persist run and review evidence before marking work `Done`; this makes completion auditable but requires more ticket updates.
 
 ## Implementation Plan
 
-- **Affected paths**: `pi-extensions/backlog-workflow/index.ts`, `tests/pi-extensions/backlog-workflow/contract.test.mjs`, and the Backlog.md config created by `/workflow-init`.
+- **Affected paths**: `pi-extensions/devflow/index.ts`, `tests/pi-extensions/devflow/contract.test.mjs`, and the Backlog.md config created by `/devflow-init`.
 - **Dependencies**: retain `backlog.md` `^1.4.0`; add none.
 - **Patterns to follow**: invoke the package-local CLI and consume its JSON boundary, per [the package-local CLI ADR](2026-09-03-use-package-local-backlog-cli.md); keep refinement decisions in Backlog.md drafts.
 - **Patterns to avoid**: global Backlog.md executables, direct Backlog.md API imports, publishing before explicit approval, worker-controlled status writes, and ad-hoc task types or statuses.
-- **Configuration**: `/workflow-init` must reconcile the seven statuses, three types, and four priorities with user confirmation before changing an existing project configuration. Ticket-creation code supplies `Medium` when no priority is chosen. It must report incompatible configurations clearly rather than silently changing them.
+- **Configuration**: `/devflow-init` must reconcile the seven statuses, three types, and four priorities with user confirmation before changing an existing project configuration. Ticket-creation code supplies `Medium` when no priority is chosen. It must report incompatible configurations clearly rather than silently changing them.
 
 ### Verification
 
-- [x] `/workflow-init` creates or reconciles a Backlog.md configuration containing exactly the specified task types, statuses, and priorities only after required confirmation; workflow-created tickets without a chosen priority receive explicit `Medium`.
+- [x] `/devflow-init` creates or reconciles a Backlog.md configuration containing exactly the specified task types, statuses, and priorities only after required confirmation; workflow-created tickets without a chosen priority receive explicit `Medium`.
 - [x] Refinement contract tests prove that unapproved drafts create no tasks, approved drafts record published ticket IDs before archiving, the controller commits only `backlog/` without consuming staged implementation paths, a failed scoped commit can retry without republishing, and valid incoming handoffs preserve their source format and move to `processed/` only after the scoped commit.
 - [x] Implementation contract tests prove `Needs Human` assigns `@human`, blocked and human-owned tasks are not selected, rework is selected before ordinary open work, and `Done` requires persisted evidence.
 - [x] Review contract tests prove reviewer evidence is persisted, two rework attempts rerun the implementer, and the cap assigns `@human` with diagnostics.
 - [x] Final approval stages and commits only validated recorded descendant paths; pre-existing or post-review index changes abort the commit, and declined approval may retain human feedback for discussion.
-- [x] `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs` passes.
+- [x] `node --test tests/pi-extensions/devflow/contract.test.mjs` passes.
 
 ## Alternatives Considered
 
@@ -100,7 +100,7 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 
 Revisit this contract if Backlog.md cannot represent the required configuration through its supported CLI, or if the package gains multiple concurrent controllers.
 
-2026-09-03: Backlog.md 1.51.0 reads `statuses`, `types`, and `priorities` through `backlog config get`, but `backlog config set` rejects those list-valued keys. `/workflow-init` must therefore update the project YAML only after confirmation and validate through the CLI. `definition_of_done` is supported in the YAML and appears as `definitionOfDone` in task JSON. Backlog.md has no configurable default priority.
+2026-09-03: Backlog.md 1.51.0 reads `statuses`, `types`, and `priorities` through `backlog config get`, but `backlog config set` rejects those list-valued keys. `/devflow-init` must therefore update the project YAML only after confirmation and validate through the CLI. `definition_of_done` is supported in the YAML and appears as `definitionOfDone` in task JSON. Backlog.md has no configurable default priority.
 
 2026-09-04: `refinement_publish` adds the approval boundary without another extension dependency: it validates proposal-local feature/sub-feature/task parentage and dependencies, asks for final interactive confirmation, creates parents before children, applies dependencies after IDs exist, records approval and ticket IDs in the draft, then archives it. Declined confirmation leaves the draft unchanged.
 
@@ -108,11 +108,11 @@ Revisit this contract if Backlog.md cannot represent the required configuration 
 
 2026-09-04: Outgoing handoffs from implementation workers are a bonus, not a prerequisite for core workflow delivery. The child-Pi runner and `/implement-run` must work with no handoff extension. Once the runner exists, it may inherit an installed `backlog-handoff` extension; do not add a workflow dependency, detection, adapter, or dedicated tests for this optional capability.
 
-2026-09-04: A child worker opts into its final-result tool with `PI_BACKLOG_WORKFLOW_WORKER=1`. In that mode only, `complete_transition` accepts `completed`, `needs_human`, `blocked`, or `failed`, returns the outcome to the controller, and terminates the child run. It makes no Backlog.md mutation, so controller-only status transitions remain enforced.
+2026-09-04: A child worker opts into its final-result tool with `PI_DEVFLOW_WORKER=1`. In that mode only, `complete_transition` accepts `completed`, `needs_human`, `blocked`, or `failed`, returns the outcome to the controller, and terminates the child run. It makes no Backlog.md mutation, so controller-only status transitions remain enforced.
 
 2026-09-04: Verified `runChildPi` supplies the workflow extension without `--no-extensions`; Pi therefore discovers an installed project- or global-level `backlog-handoff` for the worker. No dependency, detection, adapter, or dedicated test is needed.
 
-2026-09-04: Automated review reuses the child-Pi runner in read-only mode rather than a separate executor. That mode allows only `read`, `grep`, `find`, `ls`, `backlog`, and `complete_transition`, sets `PI_BACKLOG_WORKFLOW_REVIEWER=1`, and rejects mutating `backlog` operations. The controller retains `In Review` until review evidence and any required rework are persisted; it must not move a task to `Done` first.
+2026-09-04: Automated review reuses the child-Pi runner in read-only mode rather than a separate executor. That mode allows only `read`, `grep`, `find`, `ls`, `backlog`, and `complete_transition`, sets `PI_DEVFLOW_REVIEWER=1`, and rejects mutating `backlog` operations. The controller retains `In Review` until review evidence and any required rework are persisted; it must not move a task to `Done` first.
 
 2026-09-04: A completed reviewer run returns JSON with an `approved` or `rework` verdict and concrete findings; do not add another `complete_transition` outcome. The controller persists that evidence as an `@reviewer` comment. It immediately reruns `rework` through the implementer, allowing two persisted attempts. A third rework verdict pauses the ticket in `Needs Human`, assigns `@human`, and records the cap diagnostic.
 

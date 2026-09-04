@@ -640,7 +640,7 @@ async function publishRefinement(pi: ExtensionAPI, root: string, input: BacklogI
 	}
 }
 
-export default function backlogWorkflowExtension(pi: ExtensionAPI) {
+export default function devflowExtension(pi: ExtensionAPI) {
 	let featureCompletions: AutocompleteItem[] = [];
 	const refreshFeatureCompletions = async (cwd: string) => {
 		try {
@@ -652,7 +652,7 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 	};
 	pi.on("session_start", async (_event, ctx) => refreshFeatureCompletions(ctx.cwd));
 
-	if (process.env.PI_BACKLOG_WORKFLOW_WORKER === "1") {
+	if (process.env.PI_DEVFLOW_WORKER === "1") {
 		pi.registerTool({
 			name: "complete_transition",
 			label: "Complete Transition",
@@ -670,17 +670,17 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 		});
 	}
 
-	pi.registerCommand("workflow-init", {
+	pi.registerCommand("devflow-init", {
 		description: "Initialize or reconcile the Backlog.md workflow configuration",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) {
-				ctx.ui.notify("workflow-init requires interactive mode", "error");
+				ctx.ui.notify("devflow-init requires interactive mode", "error");
 				return;
 			}
 
 			const git = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd: ctx.cwd, timeout: 3_000 });
 			if (git.code !== 0 || !git.stdout.trim()) {
-				ctx.ui.notify("workflow-init requires a Git repository", "error");
+				ctx.ui.notify("devflow-init requires a Git repository", "error");
 				return;
 			}
 			const root = git.stdout.trim();
@@ -707,28 +707,28 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				}
 				ctx.ui.notify("Backlog.md workflow is ready", "success");
 			} catch (error: any) {
-				ctx.ui.notify(`workflow-init failed: ${error?.message ?? String(error)}`, "error");
+				ctx.ui.notify(`devflow-init failed: ${error?.message ?? String(error)}`, "error");
 			}
 		},
 	});
 
-	pi.registerCommand("workflow-commit-backlog", {
+	pi.registerCommand("devflow-commit-backlog", {
 		description: "Commit pending Backlog.md workflow changes",
 		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) return void ctx.ui.notify("workflow-commit-backlog requires interactive mode", "error");
+			if (!ctx.hasUI) return void ctx.ui.notify("devflow-commit-backlog requires interactive mode", "error");
 			try {
 				const commit = await commitBacklogChanges(pi, await projectRoot(pi, ctx.cwd), "Commit Backlog.md workflow changes");
 				ctx.ui.notify(commit ? `Committed Backlog.md changes: ${commit}` : "No Backlog.md changes to commit", commit ? "success" : "info");
 			} catch (error: any) {
-				ctx.ui.notify(`workflow-commit-backlog failed: ${error?.message ?? String(error)}`, "error");
+				ctx.ui.notify(`devflow-commit-backlog failed: ${error?.message ?? String(error)}`, "error");
 			}
 		},
 	});
 
-	pi.registerCommand("workflow-inbox", {
+	pi.registerCommand("devflow-inbox", {
 		description: "List and resolve pending human requests",
 		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) return void ctx.ui.notify("workflow-inbox requires interactive mode", "error");
+			if (!ctx.hasUI) return void ctx.ui.notify("devflow-inbox requires interactive mode", "error");
 			const root = await projectRoot(pi, ctx.cwd);
 			try {
 				const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--status", "Needs Human", "--json"])).tasks as WorkflowTask[];
@@ -743,7 +743,7 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				await resolveHumanRequest(pi, root, task.id, answer);
 				ctx.ui.notify(`${task.id}: human response recorded`, "success");
 			} catch (error: any) {
-				ctx.ui.notify(`workflow-inbox failed: ${error?.message ?? String(error)}`, "error");
+				ctx.ui.notify(`devflow-inbox failed: ${error?.message ?? String(error)}`, "error");
 			}
 		},
 	});
@@ -932,7 +932,7 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 		promptGuidelines: ["Use backlog rather than shell commands to read or update Backlog.md tickets and drafts."],
 		parameters: BACKLOG_SCHEMA,
 		async execute(_toolCallId, input: BacklogInput, signal, _onUpdate, ctx) {
-			if (process.env.PI_BACKLOG_WORKFLOW_REVIEWER === "1" && isWrite(input.operation)) throw new Error("Reviewer workers may only read Backlog.md.");
+			if (process.env.PI_DEVFLOW_REVIEWER === "1" && isWrite(input.operation)) throw new Error("Reviewer workers may only read Backlog.md.");
 			const root = await projectRoot(pi, ctx.cwd);
 			const run = async () => {
 				if (input.operation === "refinement_publish") {

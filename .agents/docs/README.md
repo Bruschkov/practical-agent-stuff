@@ -11,8 +11,8 @@ Repo operating manual for future coding agents.
 - ADR index: [`decisions/README.md`](decisions/README.md)
 - Repo overview and install notes: [`../../README.md`](../../README.md)
 - Backlog handoff extension docs: [`../../pi-extensions/backlog-handoff/README.md`](../../pi-extensions/backlog-handoff/README.md)
-- Backlog workflow end-user guide: [`../../pi-extensions/backlog-workflow/README.md`](../../pi-extensions/backlog-workflow/README.md)
-- Backlog workflow maintainer details: [`backlog-workflow.md`](backlog-workflow.md)
+- Devflow end-user guide: [`../../pi-extensions/devflow/README.md`](../../pi-extensions/devflow/README.md)
+- Devflow maintainer details: [`devflow.md`](devflow.md)
 - Backlog handoff example: [`../../pi-extensions/backlog-handoff/examples/generic-fullstack/README.md`](../../pi-extensions/backlog-handoff/examples/generic-fullstack/README.md)
 
 ## Rules / workflow

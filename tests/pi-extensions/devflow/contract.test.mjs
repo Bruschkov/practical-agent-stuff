@@ -9,7 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
-const packageRoot = path.join(repoRoot, "pi-extensions", "backlog-workflow");
+const packageRoot = path.join(repoRoot, "pi-extensions", "devflow");
 const backlog = path.join(packageRoot, "node_modules", ".bin", "backlog");
 const run = promisify(execFile);
 
@@ -70,9 +70,9 @@ async function workflowToolHarness(exec = async (command, args, options = {}) =>
 
 async function registeredTools(exec = async () => ({ stdout: "", stderr: "", code: 0, killed: false }), worker = false) {
 	const tools = new Map();
-	const previous = process.env.PI_BACKLOG_WORKFLOW_WORKER;
-	if (worker) process.env.PI_BACKLOG_WORKFLOW_WORKER = "1";
-	else delete process.env.PI_BACKLOG_WORKFLOW_WORKER;
+	const previous = process.env.PI_DEVFLOW_WORKER;
+	if (worker) process.env.PI_DEVFLOW_WORKER = "1";
+	else delete process.env.PI_DEVFLOW_WORKER;
 	try {
 		const extension = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
 		extension.default({
@@ -84,8 +84,8 @@ async function registeredTools(exec = async () => ({ stdout: "", stderr: "", cod
 			exec,
 		});
 	} finally {
-		if (previous === undefined) delete process.env.PI_BACKLOG_WORKFLOW_WORKER;
-		else process.env.PI_BACKLOG_WORKFLOW_WORKER = previous;
+		if (previous === undefined) delete process.env.PI_DEVFLOW_WORKER;
+		else process.env.PI_DEVFLOW_WORKER = previous;
 	}
 	return tools;
 }
@@ -109,7 +109,7 @@ function commandContext(cwd, confirm = async () => true, input = async () => und
 	};
 }
 
-test("backlog-workflow is a Pi package with its Backlog.md dependency", async () => {
+test("devflow is a Pi package with its Backlog.md dependency", async () => {
 	const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
 	assert.deepEqual(manifest.pi.extensions, ["./index.ts"]);
 	assert.equal(manifest.dependencies["backlog.md"], "^1.4.0");
@@ -120,8 +120,8 @@ test("backlog-workflow is a Pi package with its Backlog.md dependency", async ()
 });
 
 test("package-local Backlog.md CLI supports the workflow contract", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-"));
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-"));
 	t.after(() => rm(project, { recursive: true, force: true }));
 
 	await run("git", ["init", "--quiet"], { cwd: project });
@@ -191,14 +191,14 @@ test("worker prompts require ticket evidence, review, reconciliation, and a term
 });
 
 test("child Pi runner inherits project context and reports bounded, malformed, and cancelled runs", async (t) => {
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-worker-"));
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-worker-"));
 	const fakePi = path.join(project, "fake-pi.mjs");
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await writeFile(fakePi, [
 		'import { writeFileSync } from "node:fs";',
 		'import path from "node:path";',
 		'const prompt = process.argv.at(-1);',
-		'writeFileSync(path.join(process.cwd(), "worker-invocation.json"), JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), worker: process.env.PI_BACKLOG_WORKFLOW_WORKER, reviewer: process.env.PI_BACKLOG_WORKFLOW_REVIEWER }));',
+		'writeFileSync(path.join(process.cwd(), "worker-invocation.json"), JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), worker: process.env.PI_DEVFLOW_WORKER, reviewer: process.env.PI_DEVFLOW_REVIEWER }));',
 		'if (prompt === "wait") setInterval(() => {}, 1_000);',
 		'else {',
 		'  const output = prompt === "large" ? "line\\n".repeat(2_100) : "implemented";',
@@ -242,20 +242,20 @@ test("child Pi runner inherits project context and reports bounded, malformed, a
 });
 
 test("backlog tool uses structured operations, bounded output, and serialized writes", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-tool-"));
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-tool-"));
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
 	await cli(project, "init", "Tool contract", "--defaults", "--integration-mode", "none");
 
 	const tool = await workflowToolHarness();
 	assert.ok(tool, "Extension did not register backlog tool");
-	const previousReviewer = process.env.PI_BACKLOG_WORKFLOW_REVIEWER;
-	process.env.PI_BACKLOG_WORKFLOW_REVIEWER = "1";
+	const previousReviewer = process.env.PI_DEVFLOW_REVIEWER;
+	process.env.PI_DEVFLOW_REVIEWER = "1";
 	const reviewerTool = await workflowToolHarness();
 	await assert.rejects(() => reviewerTool.execute("write", { operation: "task_create", title: "Forbidden" }, undefined, undefined, { cwd: project }), /Reviewer workers may only read/);
-	if (previousReviewer === undefined) delete process.env.PI_BACKLOG_WORKFLOW_REVIEWER;
-	else process.env.PI_BACKLOG_WORKFLOW_REVIEWER = previousReviewer;
+	if (previousReviewer === undefined) delete process.env.PI_DEVFLOW_REVIEWER;
+	else process.env.PI_DEVFLOW_REVIEWER = previousReviewer;
 	const ctx = { cwd: project };
 	const created = await tool.execute("create", {
 		operation: "task_create", title: "Created through tool", type: "feature", acceptanceCriteria: ["Tool creates the ticket"],
@@ -286,15 +286,15 @@ test("backlog tool uses structured operations, bounded output, and serialized wr
 	assert.match(truncated.content[0].text, /Output truncated/);
 });
 
-test("workflow-inbox lists and resolves pending human requests", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-inbox-"));
+test("devflow-inbox lists and resolves pending human requests", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-inbox-"));
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
 	await cli(project, "init", "Inbox contract", "--defaults", "--integration-mode", "none");
 
 	const { commands } = await workflowHarness();
-	await commands.get("workflow-init").handler("", commandContext(project).ctx);
+	await commands.get("devflow-init").handler("", commandContext(project).ctx);
 	const firstId = createdId(await cli(project, "task", "create", "First request", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
 	const secondId = createdId(await cli(project, "task", "create", "Deployment request", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
 	for (const id of [firstId, secondId]) await cli(project, "task", "edit", id, "--status", "Needs Human", "--assignee", "@human", "--comment", `## Human request\nChoose a target for ${id}.\n\nResponse: pending`, "--comment-author", "@workflow");
@@ -311,7 +311,7 @@ test("workflow-inbox lists and resolves pending human requests", async (t) => {
 		prompt = `${label}\n${value}`;
 		return input(label, value);
 	};
-	await commands.get("workflow-inbox").handler("", inbox.ctx);
+	await commands.get("devflow-inbox").handler("", inbox.ctx);
 	assert.ok(choices.some((choice) => choice.startsWith(`${firstId}: First request`)));
 	assert.ok(choices.some((choice) => choice.startsWith(`${secondId}: Deployment request`)));
 	assert.match(prompt, /Choose a target for/);
@@ -323,8 +323,8 @@ test("workflow-inbox lists and resolves pending human requests", async (t) => {
 });
 
 test("implement-run handles fake-Pi success, malformed evidence, and blocked-task refusal", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-implement-"));
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-implement-"));
 	const fakePi = path.join(project, "fake-pi.mjs");
 	const invocations = path.join(project, "worker-invocations");
 	t.after(() => rm(project, { recursive: true, force: true }));
@@ -350,7 +350,7 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	t.after(() => { process.argv[1] = previousScript; });
 
 	const { commands } = await workflowHarness();
-	await commands.get("workflow-init").handler("", commandContext(project).ctx);
+	await commands.get("devflow-init").handler("", commandContext(project).ctx);
 	const command = commands.get("implement-run");
 	const taskId = createdId(await cli(project, "task", "create", "Implement", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
 	await command.handler(taskId, commandContext(project).ctx);
@@ -418,7 +418,7 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	const { commands: restartedCommands } = await workflowHarness();
 	const restarted = commandContext(project, async () => true, async () => "Resume with staging.");
 	restarted.ctx.ui.select = async (_label, options) => options.find((option) => option.startsWith(`${deferredId}:`));
-	await restartedCommands.get("workflow-inbox").handler("", restarted.ctx);
+	await restartedCommands.get("devflow-inbox").handler("", restarted.ctx);
 	const resumed = JSON.parse(await cli(project, "task", "view", deferredId, "--json")).task;
 	assert.equal(resumed.status, "Open");
 	assert.deepEqual(resumed.assignees, []);
@@ -426,8 +426,8 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 });
 
 test("implement-run processes every ready descendant leaf for a feature", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-feature-"));
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-feature-"));
 	const fakePi = path.join(project, "fake-pi.mjs");
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
@@ -447,7 +447,7 @@ test("implement-run processes every ready descendant leaf for a feature", async 
 	t.after(() => { process.argv[1] = previousScript; });
 
 	const { commands, events } = await workflowHarness();
-	await commands.get("workflow-init").handler("", commandContext(project).ctx);
+	await commands.get("devflow-init").handler("", commandContext(project).ctx);
 	const featureId = createdId(await cli(project, "task", "create", "Feature", "--type", "feature", "--priority", "Medium"), "task");
 	const subFeatureId = createdId(await cli(project, "task", "create", "Group", "--type", "sub-feature", "--priority", "Medium", "--parent", featureId), "task");
 	const blockedId = createdId(await cli(project, "task", "create", "Blocked dependency", "--type", "task", "--priority", "Medium", "--parent", subFeatureId, "--ac", "Works"), "task");
@@ -479,8 +479,8 @@ test("implement-run processes every ready descendant leaf for a feature", async 
 });
 
 test("implement-run reconciles and requires final human approval after every descendant leaf is Done", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-reconcile-feature-"));
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-reconcile-feature-"));
 	const fakePi = path.join(project, "fake-pi.mjs");
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
@@ -501,7 +501,7 @@ test("implement-run reconciles and requires final human approval after every des
 	t.after(() => { process.argv[1] = previousScript; });
 
 	const { commands, messages } = await workflowHarness();
-	await commands.get("workflow-init").handler("", commandContext(project).ctx);
+	await commands.get("devflow-init").handler("", commandContext(project).ctx);
 	const featureId = createdId(await cli(project, "task", "create", "Feature", "--type", "feature", "--priority", "Medium", "--ac", "Feature works"), "task");
 	const leafId = createdId(await cli(project, "task", "create", "Leaf", "--type", "task", "--priority", "Medium", "--parent", featureId, "--ac", "Leaf works"), "task");
 	await cli(project, "task", "edit", leafId, "--status", "Done", "--final-summary", "Leaf shipped", "--notes", "node --test: passed", "--modified-file", "tracked.txt", "--comment", "Verdict: approved", "--comment-author", "@reviewer");
@@ -550,7 +550,7 @@ test("implement-run reconciles and requires final human approval after every des
 
 test("feature selection and recommendation follow hierarchy, dependency, priority, and resume JSON fixtures", async () => {
 	const { recommendRunnableFeature, selectRunnableFeatureTask } = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
-	const fixture = async (name) => JSON.parse(await readFile(path.join(repoRoot, "tests", "pi-extensions", "backlog-workflow", "fixtures", name), "utf8")).tasks;
+	const fixture = async (name) => JSON.parse(await readFile(path.join(repoRoot, "tests", "pi-extensions", "devflow", "fixtures", name), "utf8")).tasks;
 	const initial = await fixture("selection-initial.json");
 	const resumed = await fixture("selection-resume.json");
 	assert.equal(selectRunnableFeatureTask(initial, "TASK-1"), "TASK-1.1.1.4");
@@ -562,8 +562,8 @@ test("feature selection and recommendation follow hierarchy, dependency, priorit
 });
 
 test("refine creates or resumes a draft and continues in the main session", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-refine-"));
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-refine-"));
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
 	await cli(project, "init", "Refine contract", "--defaults", "--integration-mode", "none");
@@ -590,8 +590,8 @@ test("refine creates or resumes a draft and continues in the main session", asyn
 });
 
 test("refine discovers a valid handoff, preserves its format, and moves it only after publication", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const root = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-handoff-"));
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const root = await mkdtemp(path.join(os.tmpdir(), "devflow-handoff-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const metaRoot = path.join(root, "meta");
 	const project = path.join(metaRoot, "backend");
@@ -661,8 +661,8 @@ test("refine discovers a valid handoff, preserves its format, and moves it only 
 });
 
 test("refinement_publish requires confirmation, publishes the hierarchy, and archives its approved draft", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-publish-"));
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-publish-"));
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
 	await configureGit(project);
@@ -717,9 +717,9 @@ test("refinement_publish requires confirmation, publishes the hierarchy, and arc
 	assert.ok(calls.indexOf(approvalEdit) < calls.findIndex((args) => args[0] === "draft" && args[1] === "archive"));
 });
 
-test("workflow-commit-backlog retries a pending scoped commit", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-commit-"));
+test("devflow-commit-backlog retries a pending scoped commit", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-commit-"));
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
 	await configureGit(project);
@@ -731,8 +731,8 @@ test("workflow-commit-backlog retries a pending scoped commit", async (t) => {
 	await chmod(hook, 0o755);
 
 	const { commands } = await workflowHarness();
-	const command = commands.get("workflow-commit-backlog");
-	assert.ok(command, "Extension did not register workflow-commit-backlog");
+	const command = commands.get("devflow-commit-backlog");
+	assert.ok(command, "Extension did not register devflow-commit-backlog");
 	const failed = commandContext(project);
 	await command.handler("", failed.ctx);
 	assert.equal(failed.notifications.at(-1).level, "error");
@@ -746,14 +746,14 @@ test("workflow-commit-backlog retries a pending scoped commit", async (t) => {
 	assert.deepEqual((await run("git", ["diff", "--cached", "--name-only"], { cwd: project })).stdout.trim().split("\n"), ["implementation.ts"]);
 });
 
-test("workflow-init initializes and validates the required configuration idempotently", async (t) => {
-	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-init-"));
+test("devflow-init initializes and validates the required configuration idempotently", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/devflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-init-"));
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
 
 	const { commands } = await workflowHarness();
-	const command = commands.get("workflow-init");
+	const command = commands.get("devflow-init");
 	assert.ok(command);
 	const first = commandContext(project);
 	await command.handler("", first.ctx);
@@ -769,16 +769,16 @@ test("workflow-init initializes and validates the required configuration idempot
 	assert.equal(repeat.notifications.at(-1).level, "success");
 });
 
-test("workflow-init requires Git and never changes existing config without confirmation", async (t) => {
+test("devflow-init requires Git and never changes existing config without confirmation", async (t) => {
 	const { commands } = await workflowHarness();
-	const command = commands.get("workflow-init");
-	const noGit = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-no-git-"));
+	const command = commands.get("devflow-init");
+	const noGit = await mkdtemp(path.join(os.tmpdir(), "devflow-no-git-"));
 	t.after(() => rm(noGit, { recursive: true, force: true }));
 	const rejected = commandContext(noGit);
 	await command.handler("", rejected.ctx);
 	assert.match(rejected.notifications.at(-1).message, /requires a Git repository/);
 
-	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-reconcile-"));
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-reconcile-"));
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
 	await cli(project, "init", "Existing", "--defaults", "--integration-mode", "none");

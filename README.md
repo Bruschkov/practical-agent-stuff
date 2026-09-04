@@ -13,7 +13,7 @@ Not meant as one bulk-installable package. Pieces used selectively.
 - `skills/writing-agents-md/` — skill for writing/reviewing `AGENTS.md`
 - `skills/agent-docs/` — skill for initializing/maintaining `.agents/docs/` and ADR placement
 - [`pi-extensions/backlog-handoff/`](pi-extensions/backlog-handoff/README.md) — cross-project backlog handoffs
-- [`pi-extensions/backlog-workflow/`](pi-extensions/backlog-workflow/README.md) — refine, implement, review, and approve Backlog.md work
+- [`pi-extensions/devflow/`](pi-extensions/devflow/README.md) — refine, implement, review, and approve Backlog.md work
 - `pi-extensions/block-commands.ts` — block configured shell commands
 - `prompts/` — prompt templates tracked in git
 
@@ -58,11 +58,11 @@ Install any extension globally:
 pi install ./pi-extensions/backlog-handoff/index.ts
 ```
 
-### backlog-workflow
+### devflow
 
 ```bash
-npm ci --prefix pi-extensions/backlog-workflow
-pi install ./pi-extensions/backlog-workflow
+npm ci --prefix pi-extensions/devflow
+pi install ./pi-extensions/devflow
 ```
 
 ### block-commands
@@ -73,9 +73,9 @@ pi install ./pi-extensions/block-commands.ts
 
 For one project only, run `pi install -l` from that project with an absolute extension path.
 
-To update installed extensions, run `git pull`, rerun `npm ci --prefix pi-extensions/backlog-workflow` if using `backlog-workflow`, then restart Pi or use `/reload`.
+To update installed extensions, run `git pull`, rerun `npm ci --prefix pi-extensions/devflow` if using `devflow`, then restart Pi or use `/reload`. Existing `backlog-workflow` installs must be replaced with `pi install ./pi-extensions/devflow`; remove the old entry with `pi config`.
 
-See the [backlog workflow guide](pi-extensions/backlog-workflow/README.md) for setup and usage.
+See the [Devflow guide](pi-extensions/devflow/README.md) for setup and usage.
 
 
 ## Prompt workflow

@@ -1,12 +1,12 @@
-# Backlog workflow extension
+# Devflow extension
 
 ## Phase 1 — Foundation
 
-- [x] Create `pi-extensions/backlog-workflow/` as a locally installable Pi package, add `backlog.md`, register a minimal extension, and add a contract-test entry point.
+- [x] Create `pi-extensions/devflow/` as a locally installable Pi package, add `backlog.md`, register a minimal extension, and add a contract-test entry point.
 - [x] Verify the package-local Backlog.md CLI in a temporary Git repository: initialization, config discovery, task/draft CRUD, parent/dependency data, comments, assignments, and stable `--json` output.
 - [x] Define the required Backlog.md statuses, task types, priorities, and Definition of Done; record the accepted workflow contract in an ADR.
-- [x] Synchronize `pi-extensions/backlog-workflow/package-lock.json` so `npm ci --prefix pi-extensions/backlog-workflow` installs, then rerun its contract test.
-- [x] Implement idempotent `/workflow-init`: require Git, initialize Backlog.md when absent, install or reconcile the required config with confirmation, and fail clearly on incompatibility.
+- [x] Synchronize `pi-extensions/devflow/package-lock.json` so `npm ci --prefix pi-extensions/devflow` installs, then rerun its contract test.
+- [x] Implement idempotent `/devflow-init`: require Git, initialize Backlog.md when absent, install or reconcile the required config with confirmation, and fail clearly on incompatibility.
 
 ## Phase 2 — Interactive refinement
 
@@ -30,7 +30,7 @@
 - [x] Add a read-only reviewer worker and route successful implementation through review before task completion.
 - [x] Persist review findings and rerun the implementer on required rework; cap repeated rework and pause with diagnostics.
 - [x] On `needs_human`, persist the request and assign `@human` before opening Pi UI; persist answers or leave deferred requests resumable.
-- [x] Add `/workflow-inbox` to list and resolve pending human requests.
+- [x] Add `/devflow-inbox` to list and resolve pending human requests.
 - [x] Test approval, rejection, deferred input, cancellation, and restart behavior.
 
 ## Phase 5 — Feature burn-down
@@ -47,7 +47,7 @@
 - [x] Present a final feature summary, checks, review evidence, and scoped diff for explicit human approval.
 - [x] Implement optional final commit using explicitly owned paths only; never use `git add -A`.
 - [x] Commit published refinement backlog changes through controller-owned Git operations, preserve staged implementation files, and provide scoped commit recovery without republishing.
-- [x] Document installation, `/workflow-init`, `/refine`, `/implement-run`, `/workflow-inbox`, configuration requirements, recovery, and current single-controller limitation.
+- [x] Document installation, `/devflow-init`, `/refine`, `/implement-run`, `/devflow-inbox`, configuration requirements, recovery, and current single-controller limitation.
 - [x] Migrate backlog-handoff to the current Pi package namespace, then run existing repository contract tests plus the workflow-extension tests.
 
 ## Phase 7 — Documentation

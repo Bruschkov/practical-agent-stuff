@@ -8,7 +8,7 @@ Versioned coding-agent assets used selectively across projects.
 
 ## Build & Test
 - Tests: `node --test tests/pi-extensions/*/contract.test.mjs`.
-- Backlog workflow: `npm ci --prefix pi-extensions/backlog-workflow && node --test tests/pi-extensions/backlog-workflow/contract.test.mjs`.
+- Devflow: `npm ci --prefix pi-extensions/devflow && node --test tests/pi-extensions/devflow/contract.test.mjs`.
 - Lint: none configured.
 - Build: none configured; Pi loads extension source directly.
 
@@ -21,5 +21,5 @@ Versioned coding-agent assets used selectively across projects.
 
 ## Docs
 - Docs map: [`.agents/docs/README.md`](.agents/docs/README.md)
-- Backlog workflow maintainer guide: [`.agents/docs/backlog-workflow.md`](.agents/docs/backlog-workflow.md)
+- Devflow maintainer guide: [`.agents/docs/devflow.md`](.agents/docs/devflow.md)
 - ADRs: [`.agents/docs/decisions/README.md`](.agents/docs/decisions/README.md) (ADR tools: use `.agents/docs/decisions/` as dir)

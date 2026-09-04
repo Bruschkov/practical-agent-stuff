@@ -116,7 +116,7 @@ export async function runChildPi({ cwd, prompt, model, thinkingLevel, readOnly }
 			signal?.removeEventListener("abort", abort);
 			resolve({ exitCode, cancelled, outcome, output: bounded(lastOutput), stderr: bounded(stderr), usage: totalUsage, failure });
 		};
-		const proc = spawn(child.command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PI_BACKLOG_WORKFLOW_WORKER: "1", PI_BACKLOG_WORKFLOW_REVIEWER: readOnly ? "1" : "0" } });
+		const proc = spawn(child.command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PI_DEVFLOW_WORKER: "1", PI_DEVFLOW_REVIEWER: readOnly ? "1" : "0" } });
 		const abort = () => {
 			cancelled = true;
 			proc.kill("SIGTERM");

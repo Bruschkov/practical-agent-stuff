@@ -1,4 +1,4 @@
-# Backlog Workflow
+# Devflow
 
 A Pi package that turns ideas into reviewed, traceable implementation through [Backlog.md](https://backlog.md).
 
@@ -23,31 +23,31 @@ Requires Pi, Git, and Node.js/npm.
 ```bash
 git clone https://github.com/Bruschkov/practical-agent-stuff.git
 cd practical-agent-stuff
-npm ci --prefix pi-extensions/backlog-workflow
-pi install "$PWD/pi-extensions/backlog-workflow"
+npm ci --prefix pi-extensions/devflow
+pi install "$PWD/pi-extensions/devflow"
 ```
 
 For a project-local installation, run this from the target repository instead:
 
 ```bash
-pi install -l /absolute/path/to/practical-agent-stuff/pi-extensions/backlog-workflow
+pi install -l /absolute/path/to/practical-agent-stuff/pi-extensions/devflow
 ```
 
 Then open Pi there and initialize the workflow:
 
 ```text
-/workflow-init
+/devflow-init
 ```
 
 ## When you open Pi
 
-Run `/workflow-init` once per repository. After that, use whichever entry point matches your intent—there is no required sequence:
+Run `/devflow-init` once per repository. After that, use whichever entry point matches your intent—there is no required sequence:
 
-- `/workflow-inbox` — check or answer deferred human requests.
+- `/devflow-inbox` — check or answer deferred human requests.
 - `/refine <idea>` — shape future work without implementing it.
 - `/implement-run` — choose a published feature and start implementation.
 
-If unsure, check `/workflow-inbox` first; it reports when empty. Then implement existing work or refine a new idea.
+If unsure, check `/devflow-inbox` first; it reports when empty. Then implement existing work or refine a new idea.
 
 With no argument, `/implement-run` opens a **feature picker**, not a task picker. It places the recommended feature first and shows its next leaf; recommendation uses the same deterministic order as implementation: rework first, then priority, backlog order, and ID. You still select explicitly. Use `/implement-run <task-id>` only when you want one specific leaf.
 
@@ -72,7 +72,7 @@ You may split the workflow across up to three Pi sessions:
 ```text
 Session A: /implement-run FEATURE-12  # implementation controller
 Session B: /refine Add scheduled report exports
-Session C: /workflow-inbox            # human requests and decisions
+Session C: /devflow-inbox            # human requests and decisions
 ```
 
 The refinement and inbox sessions are optional: any interactive session can refine or answer inbox requests. Final feature approval is presented by the session running that feature's `/implement-run` controller. `/implement-run` is not a permanent daemon; it runs the selected work until it finishes or pauses for a failure, blocker, human decision, or final approval. Do not run multiple `/implement-run` controllers in the same Git worktree.
@@ -92,17 +92,17 @@ Needs Human --answer--> Open
 all feature leaves Done --> reconciliation --> feature In Review --> final human approval --> Done
 ```
 
-`/implement-run` asks for human input immediately when possible. If you dismiss the prompt, the request remains in `Needs Human`; run `/workflow-inbox` later from any interactive Pi session—no dedicated third session required. The answer reopens the ticket; rerun `/implement-run` if no feature run is still active.
+`/implement-run` asks for human input immediately when possible. If you dismiss the prompt, the request remains in `Needs Human`; run `/devflow-inbox` later from any interactive Pi session—no dedicated third session required. The answer reopens the ticket; rerun `/implement-run` if no feature run is still active.
 
 Review-triggered rework runs automatically, up to two attempts. `Blocked` work stays paused until its external blocker is resolved and the ticket is reopened.
 
 ## Commands
 
-- `/workflow-init` — initialize or reconcile the project's Backlog.md workflow.
+- `/devflow-init` — initialize or reconcile the project's Backlog.md workflow.
 - `/refine <idea-or-draft-id>` — create or resume refinement; omit the argument to select a draft or incoming handoff.
 - `/implement-run <task-or-feature-id>` — implement one leaf or burn down a feature; omit the argument for a recommended-feature picker and automatic leaf selection.
-- `/workflow-inbox` — answer requests waiting in `Needs Human`.
-- `/workflow-commit-backlog` — retry a failed scoped backlog commit without republishing tickets.
+- `/devflow-inbox` — answer requests waiting in `Needs Human`.
+- `/devflow-commit-backlog` — retry a failed scoped backlog commit without republishing tickets.
 
 Interactive Pi mode is required for confirmations and human input.
 
