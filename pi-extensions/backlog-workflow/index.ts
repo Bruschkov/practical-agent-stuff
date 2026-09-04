@@ -242,8 +242,7 @@ async function featureChoices(pi: ExtensionAPI, root: string) {
 	}));
 }
 
-async function runnableFeatureTask(pi: ExtensionAPI, root: string, featureId: string) {
-	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--json"])).tasks as WorkflowTaskSummary[];
+export function selectRunnableFeatureTask(tasks: WorkflowTaskSummary[], featureId: string) {
 	const feature = tasks.find((task) => task.id === featureId);
 	if (feature?.type !== "feature") return null;
 	const children = new Map<string, WorkflowTaskSummary[]>();
@@ -263,6 +262,11 @@ async function runnableFeatureTask(pi: ExtensionAPI, root: string, featureId: st
 		(a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER) ||
 		(a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
 	)[0]?.id ?? null;
+}
+
+async function runnableFeatureTask(pi: ExtensionAPI, root: string, featureId: string) {
+	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--json"])).tasks as WorkflowTaskSummary[];
+	return selectRunnableFeatureTask(tasks, featureId);
 }
 
 function implementationEvidence(output: string, task: WorkflowTask): ImplementationEvidence {

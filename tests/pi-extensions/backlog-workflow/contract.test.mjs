@@ -459,6 +459,15 @@ test("implement-run processes every ready descendant leaf for a feature", async 
 	}
 });
 
+test("feature selection follows hierarchy, dependency, priority, and resume JSON fixtures", async () => {
+	const { selectRunnableFeatureTask } = await import(`${pathToFileURL(path.join(packageRoot, "index.ts")).href}?t=${Date.now()}`);
+	const fixture = async (name) => JSON.parse(await readFile(path.join(repoRoot, "tests", "pi-extensions", "backlog-workflow", "fixtures", name), "utf8")).tasks;
+	assert.equal(selectRunnableFeatureTask(await fixture("selection-initial.json"), "TASK-1"), "TASK-1.1.1.4");
+	assert.equal(selectRunnableFeatureTask(await fixture("selection-resume.json"), "TASK-1"), "TASK-1.1.1.5");
+	assert.equal(selectRunnableFeatureTask(await fixture("selection-priority.json"), "TASK-1"), "TASK-1.1.1.6");
+	assert.equal(selectRunnableFeatureTask(await fixture("selection-ordinal.json"), "TASK-1"), "TASK-1.1.1.7");
+});
+
 test("refine creates or resumes a draft and continues in the main session", async (t) => {
 	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
 	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-refine-"));

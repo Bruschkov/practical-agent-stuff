@@ -39,7 +39,7 @@
 - [x] Apply deterministic ordering: rework first, then configured priority, Backlog order, and task ID.
 - [x] Add no-argument feature selection with command completion; never switch features silently.
 - [x] Continue sequentially through implementation, review, rework, and HITL until the selected feature has no runnable tasks.
-- [ ] Test hierarchy, dependency, priority, and resume selection against real Backlog.md JSON fixtures.
+- [x] Test hierarchy, dependency, priority, and resume selection against real Backlog.md JSON fixtures.
 
 ## Phase 6 — Reconciliation and completion
 
