@@ -73,7 +73,8 @@ type ProposedTask = Static<typeof PROPOSED_TASK_SCHEMA>;
 type IncomingHandoff = { filePath: string; title: string; content: string };
 type HandoffInbox = { status: string; handoffs: IncomingHandoff[]; processedDir?: string };
 type WorkflowTask = {
-	id: string; status: string; type: string; isReady: boolean; subtasks: unknown[];
+	id: string; title?: string; status: string; type: string; isReady: boolean; subtasks: unknown[];
+	assignees?: string[];
 	readiness?: { isBlocked?: boolean };
 	acceptanceCriteria: { index: number; text: string }[];
 	comments?: { body: string; author: string }[];
@@ -298,13 +299,22 @@ function requestText(output: string) {
 	return output.trim() || "Worker requested a human decision.";
 }
 
+async function resolveHumanRequest(pi: ExtensionAPI, root: string, taskId: string, answer: string) {
+	await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Open", "--assignee", "", "--comment", `## Human response\n${answer.trim()}`, "--comment-author", "@human"]);
+}
+
 async function requestHuman(pi: ExtensionAPI, root: string, taskId: string, request: string, ctx: any) {
 	await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Needs Human", "--assignee", "@human", "--comment", `## Human request\n${request}\n\nResponse: pending`, "--comment-author", "@workflow"]);
 	if (!ctx.hasUI) return false;
 	const answer = await ctx.ui.input(`Human input required: ${taskId}`, request);
 	if (!answer?.trim()) return false;
-	await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Open", "--assignee", "", "--comment", `## Human response\n${answer.trim()}`, "--comment-author", "@human"]);
+	await resolveHumanRequest(pi, root, taskId, answer);
 	return true;
+}
+
+function humanRequest(task: WorkflowTask) {
+	return [...(task.comments ?? [])].reverse().find((comment) => comment.author === "@workflow" && comment.body.includes("## Human request"))?.body
+		?? "This ticket requires human input. Review its workflow comments for details.";
 }
 
 function handoffFromFile(filePath: string, content: string): IncomingHandoff | null {
@@ -489,6 +499,29 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				ctx.ui.notify("Backlog.md workflow is ready", "success");
 			} catch (error: any) {
 				ctx.ui.notify(`workflow-init failed: ${error?.message ?? String(error)}`, "error");
+			}
+		},
+	});
+
+	pi.registerCommand("workflow-inbox", {
+		description: "List and resolve pending human requests",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI) return void ctx.ui.notify("workflow-inbox requires interactive mode", "error");
+			const root = await projectRoot(pi, ctx.cwd);
+			try {
+				const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--status", "Needs Human", "--json"])).tasks as WorkflowTask[];
+				if (!tasks.length) return void ctx.ui.notify("No pending human requests", "info");
+				const choices = new Map(tasks.map((task) => [`${task.id}: ${task.title ?? "Untitled"}`, task.id]));
+				const choice = await ctx.ui.select("Pending human requests", [...choices.keys()]);
+				if (!choice) return;
+				const taskId = choices.get(choice)!;
+				const task = JSON.parse(await runBacklog(pi, root, ["task", "view", taskId, "--json"])).task as WorkflowTask;
+				const answer = await ctx.ui.input(`Human input required: ${task.id}`, humanRequest(task));
+				if (!answer?.trim()) return void ctx.ui.notify(`${task.id}: remains Needs Human`, "info");
+				await resolveHumanRequest(pi, root, task.id, answer);
+				ctx.ui.notify(`${task.id}: human response recorded`, "success");
+			} catch (error: any) {
+				ctx.ui.notify(`workflow-inbox failed: ${error?.message ?? String(error)}`, "error");
 			}
 		},
 	});

@@ -270,6 +270,42 @@ test("backlog tool uses structured operations, bounded output, and serialized wr
 	assert.match(truncated.content[0].text, /Output truncated/);
 });
 
+test("workflow-inbox lists and resolves pending human requests", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-inbox-"));
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Inbox contract", "--defaults", "--integration-mode", "none");
+
+	const { commands } = await workflowHarness();
+	await commands.get("workflow-init").handler("", commandContext(project).ctx);
+	const firstId = createdId(await cli(project, "task", "create", "First request", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
+	const secondId = createdId(await cli(project, "task", "create", "Deployment request", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
+	for (const id of [firstId, secondId]) await cli(project, "task", "edit", id, "--status", "Needs Human", "--assignee", "@human", "--comment", `## Human request\nChoose a target for ${id}.\n\nResponse: pending`, "--comment-author", "@workflow");
+
+	const inbox = commandContext(project, async () => true, async () => "Use staging.");
+	let choices = [];
+	let prompt = "";
+	inbox.ctx.ui.select = async (_label, options) => {
+		choices = options;
+		return options.find((option) => option.startsWith(`${secondId}:`));
+	};
+	const input = inbox.ctx.ui.input;
+	inbox.ctx.ui.input = async (label, value) => {
+		prompt = `${label}\n${value}`;
+		return input(label, value);
+	};
+	await commands.get("workflow-inbox").handler("", inbox.ctx);
+	assert.ok(choices.some((choice) => choice.startsWith(`${firstId}: First request`)));
+	assert.ok(choices.some((choice) => choice.startsWith(`${secondId}: Deployment request`)));
+	assert.match(prompt, /Choose a target for/);
+	const resolved = JSON.parse(await cli(project, "task", "view", secondId, "--json")).task;
+	assert.equal(resolved.status, "Open");
+	assert.deepEqual(resolved.assignees, []);
+	assert.match(resolved.comments.at(-1).body, /Use staging/);
+	assert.equal(JSON.parse(await cli(project, "task", "view", firstId, "--json")).task.status, "Needs Human");
+});
+
 test("implement-run handles fake-Pi success, malformed evidence, and blocked-task refusal", async (t) => {
 	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
 	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-implement-"));
