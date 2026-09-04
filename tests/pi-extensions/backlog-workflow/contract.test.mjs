@@ -409,6 +409,41 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	assert.match(resumed.comments.at(-1).body, /Resume with staging/);
 });
 
+test("implement-run selects only a ready descendant leaf for a feature", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-feature-"));
+	const fakePi = path.join(project, "fake-pi.mjs");
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Feature contract", "--defaults", "--integration-mode", "none");
+	await writeFile(fakePi, [
+		'const review = process.argv.at(-1).includes("read-only reviewer");',
+		'const evidence = { summary: "Implemented", plan: ["Change code"], modifiedFiles: ["index.ts"], acceptanceCriteria: [{ criterion: "Works", status: "met", evidence: "Checked" }], checks: [{ command: "node --test", status: "passed", evidence: "ok" }], documentation: { impact: "none", evidence: "No docs" }, blockers: [] };',
+		'const output = JSON.stringify(review ? { verdict: "approved", findings: [] } : evidence);',
+		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: output }], usage: {} } }));',
+		'console.log(JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "complete_transition", details: { outcome: "completed" }, isError: false, content: [] } }));',
+	].join("\n"));
+	const previousScript = process.argv[1];
+	process.argv[1] = fakePi;
+	t.after(() => { process.argv[1] = previousScript; });
+
+	const { commands } = await workflowHarness();
+	await commands.get("workflow-init").handler("", commandContext(project).ctx);
+	const featureId = createdId(await cli(project, "task", "create", "Feature", "--type", "feature", "--priority", "Medium"), "task");
+	const subFeatureId = createdId(await cli(project, "task", "create", "Group", "--type", "sub-feature", "--priority", "Medium", "--parent", featureId), "task");
+	const blockedId = createdId(await cli(project, "task", "create", "Blocked dependency", "--type", "task", "--priority", "Medium", "--parent", subFeatureId, "--ac", "Works"), "task");
+	await cli(project, "task", "edit", blockedId, "--status", "Blocked");
+	const waitingId = createdId(await cli(project, "task", "create", "Waiting", "--type", "task", "--priority", "Medium", "--parent", subFeatureId, "--depends-on", blockedId, "--ac", "Works"), "task");
+	const humanId = createdId(await cli(project, "task", "create", "Human owned", "--type", "task", "--priority", "Medium", "--parent", subFeatureId, "--ac", "Works"), "task");
+	await cli(project, "task", "edit", humanId, "--assignee", "@human");
+	const runnableId = createdId(await cli(project, "task", "create", "Runnable", "--type", "task", "--priority", "Medium", "--parent", subFeatureId, "--ac", "Works"), "task");
+
+	await commands.get("implement-run").handler(featureId, commandContext(project).ctx);
+	for (const [id, status] of [[blockedId, "Blocked"], [waitingId, "Open"], [humanId, "Open"], [runnableId, "In Review"]]) {
+		assert.equal(JSON.parse(await cli(project, "task", "view", id, "--json")).task.status, status);
+	}
+});
+
 test("refine creates or resumes a draft and continues in the main session", async (t) => {
 	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
 	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-refine-"));

@@ -79,6 +79,7 @@ type WorkflowTask = {
 	acceptanceCriteria: { index: number; text: string }[];
 	comments?: { body: string; author: string }[];
 };
+type WorkflowTaskSummary = Pick<WorkflowTask, "id" | "status" | "type" | "isReady" | "assignees"> & { parentTaskId?: string | null };
 type ImplementationEvidence = {
 	summary: string; plan: string[]; modifiedFiles: string[];
 	acceptanceCriteria: { criterion: string; status: "met" | "unmet"; evidence: string; index: number }[];
@@ -229,6 +230,20 @@ async function runBacklog(pi: ExtensionAPI, root: string, args: string[]) {
 	const output = `${result.stdout}${result.stderr ? `${result.stdout ? "\n" : ""}${result.stderr}` : ""}`.trim();
 	if (result.code !== 0) throw new Error(output || `backlog ${args.join(" ")} failed.`);
 	return output;
+}
+
+async function runnableFeatureTask(pi: ExtensionAPI, root: string, featureId: string) {
+	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--json"])).tasks as WorkflowTaskSummary[];
+	const feature = tasks.find((task) => task.id === featureId);
+	if (feature?.type !== "feature") return null;
+	const children = new Map<string, WorkflowTaskSummary[]>();
+	for (const task of tasks) if (task.parentTaskId) children.set(task.parentTaskId, [...(children.get(task.parentTaskId) ?? []), task]);
+	const descendants = new Set<string>();
+	for (const pending = [featureId]; pending.length;) {
+		const id = pending.pop()!;
+		for (const child of children.get(id) ?? []) if (!descendants.has(child.id)) descendants.add(child.id), pending.push(child.id);
+	}
+	return tasks.find((task) => descendants.has(task.id) && task.type === "task" && task.status === "Open" && task.isReady && !task.assignees?.includes("@human"))?.id ?? null;
 }
 
 function implementationEvidence(output: string, task: WorkflowTask): ImplementationEvidence {
@@ -527,15 +542,21 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("implement-run", {
-		description: "Run one ready leaf task in an isolated implementation worker",
+		description: "Run one ready leaf task or feature descendant in an isolated implementation worker",
 		handler: async (args, ctx) => {
-			const taskId = args.trim();
-			if (!taskId) return void ctx.ui.notify("implement-run requires a task ID", "error");
+			const requestedId = args.trim();
+			if (!requestedId) return void ctx.ui.notify("implement-run requires a task or feature ID", "error");
 			const root = await projectRoot(pi, ctx.cwd);
+			let taskId = requestedId;
 			let started = false;
 			try {
-				const task = JSON.parse(await runBacklog(pi, root, ["task", "view", taskId, "--json"])).task as WorkflowTask;
-				if (task.type !== "task" || task.status !== "Open" || !task.isReady || task.readiness?.isBlocked || task.subtasks.length) throw new Error(`${taskId} is not a ready, unblocked leaf task.`);
+				const requestedTask = JSON.parse(await runBacklog(pi, root, ["task", "view", requestedId, "--json"])).task as WorkflowTask;
+				if (requestedTask.type === "feature") {
+					taskId = await runnableFeatureTask(pi, root, requestedId) ?? "";
+					if (!taskId) throw new Error(`${requestedId} has no ready, unblocked descendant leaf task.`);
+				}
+				const task = taskId === requestedId ? requestedTask : JSON.parse(await runBacklog(pi, root, ["task", "view", taskId, "--json"])).task as WorkflowTask;
+				if (task.type !== "task" || task.status !== "Open" || !task.isReady || task.readiness?.isBlocked || task.assignees?.includes("@human") || task.subtasks.length) throw new Error(`${taskId} is not a ready, unblocked leaf task.`);
 				let attempt = reworkAttempts(task);
 				const implement = async (rework = false) => {
 					await runBacklog(pi, root, ["task", "edit", task.id, "--status", "In Progress", "--comment", rework ? `Rework implementation worker started (attempt ${attempt} of ${maxReworkAttempts}).` : "Implementation worker started.", "--comment-author", "@workflow"]);
