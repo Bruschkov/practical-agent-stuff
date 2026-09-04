@@ -41,6 +41,24 @@ npx skills add Bruschkov/practical-agent-stuff --skill "writing-agents-md"
 
 After repo path changes, reinstall affected skills if old lock entries point at removed paths.
 
+## Backlog workflow installation
+
+Install globally from a local clone:
+
+```bash
+git clone https://github.com/Bruschkov/practical-agent-stuff.git ~/src/practical-agent-stuff
+npm ci --prefix ~/src/practical-agent-stuff/pi-extensions/backlog-workflow
+pi install ~/src/practical-agent-stuff/pi-extensions/backlog-workflow
+```
+
+For one project only, run this inside that project:
+
+```bash
+pi install -l ~/src/practical-agent-stuff/pi-extensions/backlog-workflow
+```
+
+Update with `git pull` and rerun `npm ci`, then restart Pi or use `/reload`. See the [backlog workflow guide](pi-extensions/backlog-workflow/README.md) for initialization and usage.
+
 ## OpenCode plugin workflow
 
 Load the backlog-handoff plugin from source in OpenCode config:
