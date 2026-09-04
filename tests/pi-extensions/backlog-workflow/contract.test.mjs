@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { access, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
@@ -197,6 +197,76 @@ test("refine creates or resumes a draft and continues in the main session", asyn
 	await command.handler("DRAFT-1", resumed.ctx);
 	assert.equal(resumed.notifications.at(-1).level, "success");
 	assert.equal(((await cli(project, "draft", "list", "--plain")).match(/DRAFT-\d+/g) ?? []).length, 1);
+});
+
+test("refine discovers a valid handoff, preserves its format, and moves it only after publication", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
+	const root = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-handoff-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const metaRoot = path.join(root, "meta");
+	const project = path.join(metaRoot, "backend");
+	const inbox = path.join(project, ".backlog-handoff", "inbox");
+	const processed = path.join(project, ".backlog-handoff", "processed");
+	await mkdir(inbox, { recursive: true });
+	await mkdir(path.join(metaRoot, ".backlog-handoff", "projects"), { recursive: true });
+	await writeFile(path.join(project, ".backlog-handoff", "config.json"), JSON.stringify({ projectId: "backend", metaRoot: ".." }));
+	await writeFile(path.join(metaRoot, ".backlog-handoff", "projects", "backend.json"), JSON.stringify({ id: "backend", path: "./backend", description: "Backend" }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Handoff contract", "--defaults", "--integration-mode", "none");
+	const handoffPath = path.join(inbox, "add-retry-metadata.md");
+	const handoff = [
+		"---",
+		'origin_project: "frontend"',
+		'origin_path: "/workspace/frontend"',
+		'target_project: "backend"',
+		`target_path: ${JSON.stringify(project)}`,
+		'created_at: "2026-09-04T00:00:00.000Z"',
+		'status: "inbox"',
+		"---",
+		"",
+		"# Add retry metadata",
+		"",
+		"## Why this is a handoff",
+		"Backend owns retry persistence.",
+		"",
+		"## Requested Change",
+		"Persist retry timestamps.",
+		"",
+		"## Acceptance Criteria",
+		"- [ ] Retry timestamps are persisted.",
+		"",
+	].join("\n");
+	await writeFile(handoffPath, handoff);
+
+	const { commands, messages } = await workflowHarness();
+	const command = commands.get("refine");
+	assert.ok(command, "Extension did not register refine");
+	const selected = commandContext(project);
+	let choices = [];
+	selected.ctx.ui.select = async (_label, options) => {
+		choices = options;
+		return options.find((option) => option.startsWith("Handoff:"));
+	};
+	await command.handler("", selected.ctx);
+	assert.ok(choices.some((choice) => choice.includes("Add retry metadata")));
+	assert.equal(selected.notifications.at(-1).level, "success");
+	const draft = await cli(project, "draft", "view", "DRAFT-1", "--plain");
+	assert.match(draft, /<!-- backlog-handoff: ".backlog-handoff\/inbox\/add-retry-metadata.md" -->/);
+	assert.match(draft, /origin_project: "frontend"/);
+	assert.match(draft, /## Requested Change/);
+	assert.match(messages.at(-1), /preserve its metadata and original request/);
+	assert.ok(existsSync(handoffPath), "Handoff must remain pending before approval");
+
+	const tool = await workflowToolHarness();
+	const published = await tool.execute("publish-handoff", {
+		operation: "refinement_publish",
+		id: "DRAFT-1",
+		proposedTasks: [{ key: "feature", title: "Retry metadata", description: "Persist retry timestamps.", type: "feature", acceptanceCriteria: ["Retry timestamps are persisted."] }],
+	}, undefined, undefined, { cwd: project, hasUI: true, ui: { confirm: async () => true } });
+	assert.match(published.content[0].text, /Published and archived/);
+	assert.match(published.content[0].text, /Moved handoff to/);
+	assert.equal(existsSync(handoffPath), false);
+	assert.equal(await readFile(path.join(processed, path.basename(handoffPath)), "utf8"), handoff);
 });
 
 test("refinement_publish requires confirmation, publishes the hierarchy, and archives its approved draft", async (t) => {

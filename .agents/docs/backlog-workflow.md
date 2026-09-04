@@ -41,7 +41,7 @@
 
 ## Verification
 - `npm ci --prefix pi-extensions/backlog-workflow && node --test tests/pi-extensions/backlog-workflow/contract.test.mjs`
-- The contract test covers the package-local CLI, the structured `backlog` tool (including bounded output and serialized writes), `/refine` draft creation/resume, proposal handoff, approval/refusal, hierarchy/dependency publication and archival, initialization, idempotent reruns, required configuration validation, Git refusal, and declined reconciliation.
+- The contract test covers the package-local CLI; the structured `backlog` tool (including bounded output and serialized writes); `/refine` draft creation/resume; valid handoff discovery, source-format preservation, and post-publication move to `processed/`; approval/refusal; hierarchy/dependency publication and archival; initialization; idempotent reruns; required configuration validation; Git refusal; and declined reconciliation.
 
 ## Related
 - [Decision: Use package-local Backlog.md CLI](decisions/2026-09-03-use-package-local-backlog-cli.md)

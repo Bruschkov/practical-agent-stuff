@@ -79,7 +79,7 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 ### Verification
 
 - [x] `/workflow-init` creates or reconciles a Backlog.md configuration containing exactly the specified task types, statuses, and priorities only after required confirmation; workflow-created tickets without a chosen priority receive explicit `Medium`.
-- [x] Refinement contract tests prove that unapproved drafts create no tasks and approved drafts record published ticket IDs before archiving.
+- [x] Refinement contract tests prove that unapproved drafts create no tasks, approved drafts record published ticket IDs before archiving, and valid incoming handoffs preserve their source format and move to `processed/` only after publication.
 - [ ] Implementation contract tests prove `Needs Human` assigns `@human`, blocked and human-owned tasks are not selected, rework is selected before ordinary open work, and `Done` requires persisted evidence.
 - [x] `node --test tests/pi-extensions/backlog-workflow/contract.test.mjs` passes.
 

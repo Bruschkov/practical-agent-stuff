@@ -14,7 +14,7 @@
 - [x] Implement `/refine <idea-or-draft-id>` as an interactive main-session workflow that creates or resumes a draft and keeps accepted decisions in Backlog.md.
 - [x] Make refinement propose intent, acceptance criteria, feature/sub-feature/task decomposition, priorities, and dependencies; publish tasks only after explicit user approval.
 - [x] Integrate optionally with `backlog-handoff`: include incoming handoffs in no-argument `/refine` selection, report inbox count/integration status, preserve handoff metadata, and move a handoff to `processed/` only after successful ticket publication.
-- [ ] Add refinement contract tests covering draft creation/resume, the approval boundary, handoff discovery/publication, and the handoff file-format contract.
+- [x] Add refinement contract tests covering draft creation/resume, the approval boundary, handoff discovery/publication, and the handoff file-format contract.
 
 ## Phase 3 — One-ticket implementation
 
