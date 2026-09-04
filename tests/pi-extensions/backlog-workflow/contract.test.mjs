@@ -80,7 +80,7 @@ async function registeredTools(exec = async () => ({ stdout: "", stderr: "", cod
 	return tools;
 }
 
-function commandContext(cwd, confirm = async () => true) {
+function commandContext(cwd, confirm = async () => true, input = async () => undefined) {
 	const notifications = [];
 	return {
 		notifications,
@@ -89,6 +89,7 @@ function commandContext(cwd, confirm = async () => true) {
 			cwd,
 			ui: {
 				confirm,
+				input,
 				notify(message, level) {
 					notifications.push({ message, level });
 				},
@@ -285,10 +286,12 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 		'writeFileSync(invocations, String(call + 1));',
 		'const evidence = { summary: "Implemented", plan: ["Change code"], modifiedFiles: ["index.ts"], acceptanceCriteria: [{ criterion: "Works", status: "met", evidence: "Checked" }], checks: [{ command: "node --test", status: "passed", evidence: "ok" }], documentation: { impact: "none", evidence: "No docs" }, blockers: [] };',
 		'const review = prompt.includes("read-only reviewer");',
+		'const human = call >= 9 && !review;',
 		'const reviewEvidence = { verdict: call === 1 ? "approved" : "rework", findings: call === 1 ? [] : [`Required fix ${call}`] };',
-		'const output = review ? JSON.stringify(reviewEvidence) : call === 2 ? "malformed" : JSON.stringify(evidence);',
+		'const output = review ? JSON.stringify(reviewEvidence) : call === 2 ? "malformed" : JSON.stringify(human ? { ...evidence, blockers: ["Choose a deployment target."] } : evidence);',
+		'const outcome = human && !review ? "needs_human" : "completed";',
 		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: output }], usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } } }));',
-		'console.log(JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "complete_transition", details: { outcome: "completed" }, isError: false, content: [] } }));',
+		'console.log(JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "complete_transition", details: { outcome }, isError: false, content: [] } }));',
 	].join("\n"));
 	const previousScript = process.argv[1];
 	process.argv[1] = fakePi;
@@ -333,6 +336,30 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	assert.match(comments, /Rework attempt: 2\/2/);
 	assert.match(comments, /Rework cap reached after 2 attempts/);
 	assert.equal(await readFile(invocations, "utf8"), "9");
+
+	const humanId = createdId(await cli(project, "task", "create", "Human input", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
+	let requestAtPrompt;
+	const humanRun = commandContext(project, async () => true, async () => {
+		requestAtPrompt = JSON.parse(await cli(project, "task", "view", humanId, "--json")).task;
+		return "Use staging.";
+	});
+	await command.handler(humanId, humanRun.ctx);
+	assert.equal(requestAtPrompt.status, "Needs Human");
+	assert.deepEqual(requestAtPrompt.assignees, ["@human"]);
+	assert.match(requestAtPrompt.comments.at(-1).body, /Human request/);
+	const human = JSON.parse(await cli(project, "task", "view", humanId, "--json")).task;
+	assert.equal(human.status, "Open");
+	assert.deepEqual(human.assignees, []);
+	const humanComments = human.comments.map(({ body, author }) => `${author}: ${body}`).join("\n");
+	assert.match(humanComments, /@workflow: ## Human request\nChoose a deployment target\.\n\nResponse: pending/);
+	assert.match(humanComments, /@human: ## Human response\nUse staging\./);
+
+	const deferredId = createdId(await cli(project, "task", "create", "Deferred human input", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
+	await command.handler(deferredId, commandContext(project).ctx);
+	const deferred = JSON.parse(await cli(project, "task", "view", deferredId, "--json")).task;
+	assert.equal(deferred.status, "Needs Human");
+	assert.deepEqual(deferred.assignees, ["@human"]);
+	assert.match(deferred.comments.at(-1).body, /Response: pending/);
 });
 
 test("refine creates or resumes a draft and continues in the main session", async (t) => {

@@ -50,7 +50,7 @@ export function reviewerPrompt(taskId: string) {
 	return `You are the read-only reviewer for Backlog.md ticket ${JSON.stringify(taskId)}.
 
 1. Read the ticket with the backlog tool (operation: "task_view", id: ${JSON.stringify(taskId)}), its implementation evidence, and the relevant changed code.
-2. Check every acceptance criterion. Before ending, respond with one JSON object (no Markdown): {"verdict": "approved"|"rework", "findings": string[]}. Use "rework" only for concrete required changes; use "approved" with an empty findings array when none remain. Do not modify files, Backlog.md, or Git state; your tools are read-only.
+2. Check every acceptance criterion. Before ending, respond with one JSON object (no Markdown): {"verdict": "approved"|"rework", "findings": string[]}; if you need a human decision instead, respond with {"request": string}. Use "rework" only for concrete required changes; use "approved" with an empty findings array when none remain. Do not modify files, Backlog.md, or Git state; your tools are read-only.
 3. Then call complete_transition exactly once as your final action: "completed" when the review was completed, "needs_human" for a specific human decision, "blocked" for an external blocker, or "failed" when the review could not be completed.`;
 }
 

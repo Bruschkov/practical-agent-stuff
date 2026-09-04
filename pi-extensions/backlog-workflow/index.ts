@@ -290,6 +290,23 @@ async function persistImplementation(pi: ExtensionAPI, root: string, task: Workf
 	await runBacklog(pi, root, args);
 }
 
+function requestText(output: string) {
+	try {
+		const value = JSON.parse(output);
+		if (typeof value?.request === "string" && value.request.trim()) return value.request.trim();
+	} catch { /* Worker output may be plain text. */ }
+	return output.trim() || "Worker requested a human decision.";
+}
+
+async function requestHuman(pi: ExtensionAPI, root: string, taskId: string, request: string, ctx: any) {
+	await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Needs Human", "--assignee", "@human", "--comment", `## Human request\n${request}\n\nResponse: pending`, "--comment-author", "@workflow"]);
+	if (!ctx.hasUI) return false;
+	const answer = await ctx.ui.input(`Human input required: ${taskId}`, request);
+	if (!answer?.trim()) return false;
+	await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Open", "--assignee", "", "--comment", `## Human response\n${answer.trim()}`, "--comment-author", "@human"]);
+	return true;
+}
+
 function handoffFromFile(filePath: string, content: string): IncomingHandoff | null {
 	const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n\r?\n# (.+?)\r?\n/);
 	if (!match || !/^status:\s*"inbox"\s*$/m.test(match[1])) return null;
@@ -497,6 +514,10 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 					const status = result.outcome === "completed" ? "In Review" : result.outcome === "blocked" ? "Blocked" : result.outcome === "needs_human" ? "Needs Human" : "Open";
 					await persistImplementation(pi, root, task, evidence, result, status);
 					started = false;
+					if (result.outcome === "needs_human") {
+						const answered = await requestHuman(pi, root, task.id, evidence.blockers.join("\n") || evidence.summary, ctx);
+						ctx.ui.notify(`${task.id}: ${answered ? "human response recorded" : "Needs Human"}`, answered ? "success" : "warning");
+					}
 					return result.outcome === "completed";
 				};
 
@@ -504,7 +525,13 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				while (true) {
 					const review = await runChildPi({ cwd: root, prompt: reviewerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel, readOnly: true });
 					if (review.failure || !review.outcome) return void ctx.ui.notify(`${task.id}: review failed: ${review.failure || "Worker did not return an outcome."}`, "error");
-					if (review.outcome !== "completed") return void ctx.ui.notify(`${task.id}: In Review (${review.outcome})`, "warning");
+					if (review.outcome !== "completed") {
+						if (review.outcome === "needs_human") {
+							const answered = await requestHuman(pi, root, task.id, requestText(review.output), ctx);
+							return void ctx.ui.notify(`${task.id}: ${answered ? "human response recorded" : "Needs Human"}`, answered ? "success" : "warning");
+						}
+						return void ctx.ui.notify(`${task.id}: In Review (${review.outcome})`, "warning");
+					}
 					const evidence = reviewEvidence(review.output);
 					await persistReview(pi, root, task, evidence);
 					if (evidence.verdict === "approved") return void ctx.ui.notify(`${task.id}: In Review`, "success");
