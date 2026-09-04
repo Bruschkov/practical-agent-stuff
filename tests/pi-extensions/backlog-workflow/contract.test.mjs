@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { access, mkdir, mkdtemp, realpath, rm, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, realpath, rm, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +15,11 @@ const run = promisify(execFile);
 
 async function cli(cwd, ...args) {
 	return (await run(backlog, args, { cwd, maxBuffer: 1024 * 1024 })).stdout;
+}
+
+async function configureGit(cwd) {
+	await run("git", ["config", "user.email", "workflow@example.test"], { cwd });
+	await run("git", ["config", "user.name", "Workflow Test"], { cwd });
 }
 
 function createdId(output, kind) {
@@ -587,6 +592,7 @@ test("refine discovers a valid handoff, preserves its format, and moves it only 
 	await writeFile(path.join(project, ".backlog-handoff", "config.json"), JSON.stringify({ projectId: "backend", metaRoot: ".." }));
 	await writeFile(path.join(metaRoot, ".backlog-handoff", "projects", "backend.json"), JSON.stringify({ id: "backend", path: "./backend", description: "Backend" }));
 	await run("git", ["init", "--quiet"], { cwd: project });
+	await configureGit(project);
 	await cli(project, "init", "Handoff contract", "--defaults", "--integration-mode", "none");
 	const handoffPath = path.join(inbox, "add-retry-metadata.md");
 	const handoff = [
@@ -649,7 +655,10 @@ test("refinement_publish requires confirmation, publishes the hierarchy, and arc
 	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-publish-"));
 	t.after(() => rm(project, { recursive: true, force: true }));
 	await run("git", ["init", "--quiet"], { cwd: project });
+	await configureGit(project);
 	await cli(project, "init", "Publish contract", "--defaults", "--integration-mode", "none");
+	await writeFile(path.join(project, "implementation.ts"), "export {};\n");
+	await run("git", ["add", "implementation.ts"], { cwd: project });
 	const draftId = createdId(await cli(project, "draft", "create", "Approved proposal", "--description", "Approval: pending"), "draft");
 	const calls = [];
 	const tool = await workflowToolHarness(async (command, args, options = {}) => {
@@ -684,6 +693,10 @@ test("refinement_publish requires confirmation, publishes the hierarchy, and arc
 		cwd: project, hasUI: true, ui: { confirm: async () => true },
 	});
 	assert.match(published.content[0].text, /Published and archived/);
+	assert.match(published.content[0].text, /Committed Backlog\.md changes/);
+	const committedFiles = (await run("git", ["show", "--format=", "--name-only", "HEAD"], { cwd: project })).stdout.trim().split("\n");
+	assert.ok(committedFiles.every((file) => file.startsWith("backlog/")));
+	assert.deepEqual((await run("git", ["diff", "--cached", "--name-only"], { cwd: project })).stdout.trim().split("\n"), ["implementation.ts"]);
 	const tasks = JSON.parse(await cli(project, "task", "list", "--json")).tasks;
 	assert.equal(tasks.length, 3);
 	const byTitle = new Map(tasks.map((task) => [task.title, task]));
@@ -692,6 +705,35 @@ test("refinement_publish requires confirmation, publishes the hierarchy, and arc
 	const approvalEdit = calls.find((args) => args[0] === "draft" && args[1] === "edit" && args.some((arg) => arg.includes("Published tickets:")));
 	assert.ok(approvalEdit, "Approval and published IDs must be recorded before archiving");
 	assert.ok(calls.indexOf(approvalEdit) < calls.findIndex((args) => args[0] === "draft" && args[1] === "archive"));
+});
+
+test("workflow-commit-backlog retries a pending scoped commit", async (t) => {
+	assert.ok(existsSync(backlog), "Run npm install in pi-extensions/backlog-workflow first.");
+	const project = await mkdtemp(path.join(os.tmpdir(), "backlog-workflow-commit-"));
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await configureGit(project);
+	await cli(project, "init", "Commit contract", "--defaults", "--integration-mode", "none");
+	await writeFile(path.join(project, "implementation.ts"), "export {};\n");
+	await run("git", ["add", "implementation.ts"], { cwd: project });
+	const hook = path.join(project, ".git", "hooks", "pre-commit");
+	await writeFile(hook, "#!/bin/sh\nexit 1\n");
+	await chmod(hook, 0o755);
+
+	const { commands } = await workflowHarness();
+	const command = commands.get("workflow-commit-backlog");
+	assert.ok(command, "Extension did not register workflow-commit-backlog");
+	const failed = commandContext(project);
+	await command.handler("", failed.ctx);
+	assert.equal(failed.notifications.at(-1).level, "error");
+	await rm(hook);
+
+	const retried = commandContext(project);
+	await command.handler("", retried.ctx);
+	assert.equal(retried.notifications.at(-1).level, "success");
+	const committedFiles = (await run("git", ["show", "--format=", "--name-only", "HEAD"], { cwd: project })).stdout.trim().split("\n");
+	assert.ok(committedFiles.every((file) => file.startsWith("backlog/")));
+	assert.deepEqual((await run("git", ["diff", "--cached", "--name-only"], { cwd: project })).stdout.trim().split("\n"), ["implementation.ts"]);
 });
 
 test("workflow-init initializes and validates the required configuration idempotently", async (t) => {

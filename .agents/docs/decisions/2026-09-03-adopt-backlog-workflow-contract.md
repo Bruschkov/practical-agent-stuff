@@ -44,7 +44,11 @@ The controller changes status. Workers return outcomes, not arbitrary status cha
 
 ### Refinement
 
-Refinement uses a Backlog.md draft, not task statuses. An unarchived draft is active/resumable and records intent, acceptance criteria, proposed hierarchy, priorities, dependencies, and `Approval: pending`. No task is published before explicit user approval. On approval, create the proposed tickets, record their IDs in the draft, and archive it. A rejected, deferred, or cancelled proposal remains an unarchived draft for later refinement.
+Refinement uses a Backlog.md draft, not task statuses. An unarchived draft is active/resumable and records intent, acceptance criteria, proposed hierarchy, priorities, dependencies, and `Approval: pending`. No task is published before explicit user approval. On approval, create the proposed tickets, record their IDs in the draft, archive it, then have controller code stage only `backlog/` and commit with `git commit --only -- backlog`. A linked handoff moves to `processed/` only after that commit. A rejected, deferred, or cancelled proposal remains an unarchived draft for later refinement.
+
+The main-session refiner does not run Git. Controller code owns the refinement commit; the implementer controller separately stages only recorded implementation files at final feature approval. Do not add general same-worktree locks for the single-controller workflow. A staged-tree change aborts final feature approval for retry rather than allowing an unrelated commit.
+
+If the refinement commit fails after publication, leave the published backlog changes pending and the handoff in the inbox. Retry only the scoped backlog commit through `/workflow-commit-backlog`; do not rerun publication, which would duplicate tickets.
 
 ### Definition of Done
 
@@ -64,7 +68,7 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 ## Consequences
 
 - `/workflow-init` can install or reconcile a single, deterministic project configuration.
-- `/refine` has an explicit approval boundary without inventing task states for unfinished ideas.
+- `/refine` has an explicit approval boundary and one scoped backlog commit without inventing task states for unfinished ideas.
 - `/implement-run` can distinguish retryable rework, external blocks, and human questions without selecting non-runnable tickets.
 - Later controllers must persist run and review evidence before marking work `Done`; this makes completion auditable but requires more ticket updates.
 
@@ -79,7 +83,7 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 ### Verification
 
 - [x] `/workflow-init` creates or reconciles a Backlog.md configuration containing exactly the specified task types, statuses, and priorities only after required confirmation; workflow-created tickets without a chosen priority receive explicit `Medium`.
-- [x] Refinement contract tests prove that unapproved drafts create no tasks, approved drafts record published ticket IDs before archiving, and valid incoming handoffs preserve their source format and move to `processed/` only after publication.
+- [x] Refinement contract tests prove that unapproved drafts create no tasks, approved drafts record published ticket IDs before archiving, the controller commits only `backlog/` without consuming staged implementation paths, a failed scoped commit can retry without republishing, and valid incoming handoffs preserve their source format and move to `processed/` only after the scoped commit.
 - [x] Implementation contract tests prove `Needs Human` assigns `@human`, blocked and human-owned tasks are not selected, rework is selected before ordinary open work, and `Done` requires persisted evidence.
 - [x] Review contract tests prove reviewer evidence is persisted, two rework attempts rerun the implementer, and the cap assigns `@human` with diagnostics.
 - [x] Final approval stages and commits only validated recorded descendant paths; pre-existing or post-review index changes abort the commit, and declined approval may retain human feedback for discussion.
@@ -90,6 +94,7 @@ Non-goals: adding a Backlog.md dependency, changing its CLI compatibility range,
 - Reuse only Backlog.md defaults: rejected because defaults do not express the worker, review, and human-in-the-loop lifecycle required by this package.
 - Use a generic `Blocked` status for human questions: rejected because an answer from a person and an external dependency need different inbox and resume behavior.
 - Require every task to have a sub-feature parent: rejected because small features should not need a placeholder grouping ticket.
+- General same-worktree locks: rejected for the current single-controller model because expected refinement/implementation overlap is rare, scoped commits preserve unrelated staged paths, and the existing final-approval staged-tree check fails safely for retry. Revisit when concurrent controllers or automation become normal.
 
 ## More Information
 

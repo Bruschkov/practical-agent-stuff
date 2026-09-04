@@ -237,6 +237,17 @@ async function runBacklog(pi: ExtensionAPI, root: string, args: string[]) {
 	return output;
 }
 
+async function commitBacklogChanges(pi: ExtensionAPI, root: string, message: string) {
+	const status = await pi.exec("git", ["status", "--porcelain=v1", "--", "backlog"], { cwd: root, timeout: 30_000 });
+	if (status.code !== 0) throw new Error(status.stderr.trim() || "Could not inspect Backlog.md changes.");
+	if (!status.stdout.trim()) return null;
+	const added = await pi.exec("git", ["add", "--", "backlog"], { cwd: root, timeout: 30_000 });
+	if (added.code !== 0) throw new Error(added.stderr.trim() || "Could not stage Backlog.md changes.");
+	const committed = await pi.exec("git", ["commit", "--only", "-m", message, "--", "backlog"], { cwd: root, timeout: 30_000 });
+	if (committed.code !== 0) throw new Error(committed.stderr.trim() || committed.stdout.trim() || "Could not commit Backlog.md changes.");
+	return (await pi.exec("git", ["rev-parse", "--short", "HEAD"], { cwd: root, timeout: 30_000 })).stdout.trim();
+}
+
 async function featureChoices(pi: ExtensionAPI, root: string) {
 	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--type", "feature", "--json"])).tasks as WorkflowTaskSummary[];
 	return tasks.sort((a, b) => (a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id)).map((task) => ({
@@ -603,8 +614,9 @@ async function publishRefinement(pi: ExtensionAPI, root: string, input: BacklogI
 		await runBacklog(pi, root, ["draft", "edit", draftId, "--comment", `Approval: approved\n\nPublished tickets:\n${publishedTickets}`, "--comment-author", "@human"]);
 		await runBacklog(pi, root, ["draft", "archive", draftId]);
 		published = true;
+		const commit = await commitBacklogChanges(pi, root, `Publish refinement ${draftId}`);
 		const handoffResult = await movePublishedHandoff(root, draft);
-		return `Published and archived ${draftId}: ${[...ids.values()].join(", ")}${handoffResult ? `\n${handoffResult}` : ""}`;
+		return `Published and archived ${draftId}: ${[...ids.values()].join(", ")}${commit ? `\nCommitted Backlog.md changes: ${commit}` : ""}${handoffResult ? `\n${handoffResult}` : ""}`;
 	} catch (error) {
 		if (ids.size && !published) await runBacklog(pi, root, ["draft", "edit", draftId, "--comment", `Publication failed after creating: ${[...ids.values()].join(", ")}`, "--comment-author", "@workflow"]);
 		throw error;
@@ -679,6 +691,19 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				ctx.ui.notify("Backlog.md workflow is ready", "success");
 			} catch (error: any) {
 				ctx.ui.notify(`workflow-init failed: ${error?.message ?? String(error)}`, "error");
+			}
+		},
+	});
+
+	pi.registerCommand("workflow-commit-backlog", {
+		description: "Commit pending Backlog.md workflow changes",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI) return void ctx.ui.notify("workflow-commit-backlog requires interactive mode", "error");
+			try {
+				const commit = await commitBacklogChanges(pi, await projectRoot(pi, ctx.cwd), "Commit Backlog.md workflow changes");
+				ctx.ui.notify(commit ? `Committed Backlog.md changes: ${commit}` : "No Backlog.md changes to commit", commit ? "success" : "info");
+			} catch (error: any) {
+				ctx.ui.notify(`workflow-commit-backlog failed: ${error?.message ?? String(error)}`, "error");
 			}
 		},
 	});
@@ -875,7 +900,7 @@ export default function backlogWorkflowExtension(pi: ExtensionAPI) {
 				}
 
 				ctx.ui.notify(`${created ? "Created" : "Resuming"} refinement draft ${draftId}`, "success");
-				pi.sendUserMessage(`Refine Backlog.md draft ${draftId} in this main session. ${selectedHandoff ? "The draft contains an incoming backlog-handoff; preserve its metadata and original request while refining it." : created ? "Start from its recorded intent." : "Read the existing draft first."} Ask focused questions, then propose intent, concrete acceptance criteria, and a feature/sub-feature/task hierarchy with priorities and dependencies. Record every accepted decision and the full proposal in the draft's description under "Accepted decisions". Keep \`Approval: pending\` and do not create or promote tasks. Only after the user explicitly approves the displayed proposal, call backlog with \`operation: "refinement_publish"\`, the draft ID, and matching \`proposedTasks\`; it will ask final confirmation, publish tickets, record their IDs, archive the draft, and then move any linked handoff to processed.`);
+				pi.sendUserMessage(`Refine Backlog.md draft ${draftId} in this main session. ${selectedHandoff ? "The draft contains an incoming backlog-handoff; preserve its metadata and original request while refining it." : created ? "Start from its recorded intent." : "Read the existing draft first."} Ask focused questions, then propose intent, concrete acceptance criteria, and a feature/sub-feature/task hierarchy with priorities and dependencies. Record every accepted decision and the full proposal in the draft's description under "Accepted decisions". Keep \`Approval: pending\` and do not create or promote tasks. Only after the user explicitly approves the displayed proposal, call backlog with \`operation: "refinement_publish"\`, the draft ID, and matching \`proposedTasks\`; it will ask final confirmation, publish tickets, record their IDs, archive and commit the Backlog.md changes, and then move any linked handoff to processed.`);
 			} catch (error: any) {
 				ctx.ui.notify(`refine failed: ${error?.message ?? String(error)}`, "error");
 			}
