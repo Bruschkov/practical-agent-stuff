@@ -503,22 +503,47 @@ function requestText(output: string) {
 	return output.trim() || "Worker requested a human decision.";
 }
 
-async function resolveHumanRequest(pi: ExtensionAPI, root: string, taskId: string, answer: string) {
-	await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Open", "--assignee", "", "--comment", `## Human response\n${answer.trim()}`, "--comment-author", "@human"]);
+async function resolveHumanRequest(pi: ExtensionAPI, root: string, taskId: string) {
+	await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Open", "--assignee", "", "--comment", "## Human continuation\nContinue confirmed.", "--comment-author", "@human"]);
 }
 
-async function requestHuman(pi: ExtensionAPI, root: string, taskId: string, request: string, ctx: any) {
-	await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Needs Human", "--assignee", "@human", "--comment", `## Human request\n${request}\n\nResponse: pending`, "--comment-author", "@workflow"]);
-	if (!ctx.hasUI) return false;
-	const answer = await ctx.ui.input(`Human input required: ${taskId}`, request);
-	if (!answer?.trim()) return false;
-	await resolveHumanRequest(pi, root, taskId, answer);
-	return true;
+async function recordHumanResponse(pi: ExtensionAPI, root: string, taskId: string, response: string) {
+	await runBacklog(pi, root, ["task", "edit", taskId, "--comment", `## Human response\n${response.trim()}`, "--comment-author", "@human"]);
 }
 
 function humanRequest(task: WorkflowTask) {
 	return [...(task.comments ?? [])].reverse().find((comment) => comment.author === "@workflow" && comment.body.includes("## Human request"))?.body
 		?? "This ticket requires human input. Review its workflow comments for details.";
+}
+
+function humanContext(task: WorkflowTask) {
+	return `Task: ${task.id} — ${task.title ?? "Untitled"}\nStatus: ${task.status}\n\nRequest:\n${humanRequest(task)}\n\nEvidence:\n${task.implementationNotes ?? task.finalSummary ?? "No implementation evidence recorded."}`;
+}
+
+async function humanDialogue(pi: ExtensionAPI, root: string, taskId: string, ctx: any) {
+	if (!ctx.hasUI) return false;
+	const task = JSON.parse(await runBacklog(pi, root, ["task", "view", taskId, "--json"])).task as WorkflowTask;
+	const context = humanContext(task);
+	while (true) {
+		const action = await ctx.ui.select(context, ["Add response", "Continue", "Defer"]);
+		if (action === "Add response") {
+			const response = await ctx.ui.input(`Human response: ${task.id}`, context);
+			if (response?.trim()) await recordHumanResponse(pi, root, task.id, response);
+			continue;
+		}
+		if (action === "Continue") {
+			if (!await ctx.ui.confirm(`Continue ${task.id}?`, context)) continue;
+			await resolveHumanRequest(pi, root, task.id);
+			return true;
+		}
+		if (action === "Defer") await recordHumanResponse(pi, root, task.id, "Deferred.");
+		return false;
+	}
+}
+
+async function requestHuman(pi: ExtensionAPI, root: string, taskId: string, request: string, ctx: any) {
+	await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Needs Human", "--assignee", "@human", "--comment", `## Human request\n${request}\n\nResponse: pending`, "--comment-author", "@workflow"]);
+	return humanDialogue(pi, root, taskId, ctx);
 }
 
 function handoffFromFile(filePath: string, content: string): IncomingHandoff | null {
@@ -787,11 +812,8 @@ export default function devflowExtension(pi: ExtensionAPI) {
 				const choice = await ctx.ui.select("Pending human requests", [...choices.keys()]);
 				if (!choice) return;
 				const taskId = choices.get(choice)!;
-				const task = JSON.parse(await runBacklog(pi, root, ["task", "view", taskId, "--json"])).task as WorkflowTask;
-				const answer = await ctx.ui.input(`Human input required: ${task.id}`, humanRequest(task));
-				if (!answer?.trim()) return void ctx.ui.notify(`${task.id}: remains Needs Human`, "info");
-				await resolveHumanRequest(pi, root, task.id, answer);
-				ctx.ui.notify(`${task.id}: human response recorded`, "success");
+				const continued = await humanDialogue(pi, root, taskId, ctx);
+				ctx.ui.notify(`${taskId}: ${continued ? "human continuation confirmed" : "remains Needs Human"}`, continued ? "success" : "info");
 			} catch (error: any) {
 				ctx.ui.notify(`devflow-inbox failed: ${error?.message ?? String(error)}`, "error");
 			}
@@ -921,16 +943,16 @@ export default function devflowExtension(pi: ExtensionAPI) {
 					await persistImplementation(pi, root, task, evidence, result, status);
 					started = false;
 					if (result.outcome === "needs_human") {
-						const answered = await requestHuman(pi, root, task.id, evidence.blockers.join("\n") || evidence.summary, ctx);
-						ctx.ui.notify(`${task.id}: ${answered ? "human response recorded" : "Needs Human"}`, answered ? "success" : "warning");
-						return result.outcome;
+						const continued = await requestHuman(pi, root, task.id, evidence.blockers.join("\n") || evidence.summary, ctx);
+						ctx.ui.notify(`${task.id}: ${continued ? "human continuation confirmed" : "Needs Human"}`, continued ? "success" : "warning");
+						return continued ? "continued" : result.outcome;
 					}
 					return result.outcome;
 				};
 
 				const initialOutcome = await implement();
 				if (initialOutcome !== "completed") {
-					if (requestedTask.type === "feature" && ["blocked", "needs_human"].includes(initialOutcome)) return implementRun(requestedId, ctx, onFeedback);
+					if (initialOutcome === "continued" || (requestedTask.type === "feature" && ["blocked", "needs_human"].includes(initialOutcome))) return implementRun(requestedId, ctx, onFeedback);
 					return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
 				}
 				while (true) {
@@ -946,9 +968,9 @@ export default function devflowExtension(pi: ExtensionAPI) {
 					}
 					if (review.outcome !== "completed") {
 						if (review.outcome === "needs_human") {
-							const answered = await requestHuman(pi, root, task.id, requestText(review.output), ctx);
-							ctx.ui.notify(`${task.id}: ${answered ? "human response recorded" : "Needs Human"}`, answered ? "success" : "warning");
-							if (requestedTask.type === "feature") return implementRun(requestedId, ctx, onFeedback);
+							const continued = await requestHuman(pi, root, task.id, requestText(review.output), ctx);
+							ctx.ui.notify(`${task.id}: ${continued ? "human continuation confirmed" : "Needs Human"}`, continued ? "success" : "warning");
+							if (continued || requestedTask.type === "feature") return implementRun(requestedId, ctx, onFeedback);
 							return;
 						}
 						ctx.ui.notify(`${task.id}: In Review (${review.outcome})`, "warning");
@@ -964,16 +986,16 @@ export default function devflowExtension(pi: ExtensionAPI) {
 						return;
 					}
 					if (attempt >= maxReworkAttempts) {
-						await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Needs Human", "--assignee", "@human", "--comment", `Rework cap reached after ${maxReworkAttempts} attempts. Review findings are recorded above.`, "--comment-author", "@workflow"]);
-						ctx.ui.notify(`${task.id}: Needs Human (rework cap reached)`, "warning");
-						if (requestedTask.type === "feature") return implementRun(requestedId, ctx, onFeedback);
+						const continued = await requestHuman(pi, root, task.id, `Rework cap reached after ${maxReworkAttempts} attempts. Review findings are recorded above.`, ctx);
+						ctx.ui.notify(`${task.id}: ${continued ? "human continuation confirmed" : "Needs Human (rework cap reached)"}`, continued ? "success" : "warning");
+						if (continued || requestedTask.type === "feature") return implementRun(requestedId, ctx, onFeedback);
 						return;
 					}
 					attempt += 1;
 					await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Rework", "--comment", `Rework attempt: ${attempt}/${maxReworkAttempts}.`, "--comment-author", "@workflow"]);
 					const reworkOutcome = await implement(true);
 					if (reworkOutcome !== "completed") {
-						if (requestedTask.type === "feature" && ["blocked", "needs_human"].includes(reworkOutcome)) return implementRun(requestedId, ctx, onFeedback);
+						if (reworkOutcome === "continued" || (requestedTask.type === "feature" && ["blocked", "needs_human"].includes(reworkOutcome))) return implementRun(requestedId, ctx, onFeedback);
 						return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
 					}
 				}

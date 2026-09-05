@@ -319,9 +319,13 @@ test("devflow-inbox lists and resolves pending human requests", async (t) => {
 	const inbox = commandContext(project, async () => true, async () => "Use staging.");
 	let choices = [];
 	let prompt = "";
+	const actions = ["Add response", "Continue"];
 	inbox.ctx.ui.select = async (_label, options) => {
-		choices = options;
-		return options.find((option) => option.startsWith(`${secondId}:`));
+		if (options.some((option) => option.startsWith(`${secondId}:`))) {
+			choices = options;
+			return options.find((option) => option.startsWith(`${secondId}:`));
+		}
+		return actions.shift();
 	};
 	const input = inbox.ctx.ui.input;
 	inbox.ctx.ui.input = async (label, value) => {
@@ -335,7 +339,8 @@ test("devflow-inbox lists and resolves pending human requests", async (t) => {
 	const resolved = JSON.parse(await cli(project, "task", "view", secondId, "--json")).task;
 	assert.equal(resolved.status, "Open");
 	assert.deepEqual(resolved.assignees, []);
-	assert.match(resolved.comments.at(-1).body, /Use staging/);
+	assert.match(resolved.comments.map(({ body }) => body).join("\n"), /Use staging/);
+	assert.match(resolved.comments.at(-1).body, /Continue confirmed/);
 	assert.equal(JSON.parse(await cli(project, "task", "view", firstId, "--json")).task.status, "Needs Human");
 });
 
@@ -355,8 +360,8 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 		'writeFileSync(invocations, String(call + 1));',
 		'const evidence = { summary: "Implemented", plan: ["Change code"], modifiedFiles: ["index.ts"], acceptanceCriteria: [{ criterion: "Works", status: "met", evidence: "Checked" }], checks: [{ command: "node --test", status: "passed", evidence: "ok" }], documentation: { impact: "none", evidence: "No docs" }, blockers: [] };',
 		'const review = prompt.includes("read-only reviewer");',
-		'const human = call >= 9 && !review;',
-		'const reviewEvidence = { verdict: call === 1 ? "approved" : "rework", findings: call === 1 ? [] : [`Required fix ${call}`] };',
+		'const human = [9, 12].includes(call) && !review;',
+		'const reviewEvidence = { verdict: call === 1 || call >= 11 ? "approved" : "rework", findings: call === 1 || call >= 11 ? [] : [`Required fix ${call}`] };',
 		'const output = review ? JSON.stringify(reviewEvidence) : call === 2 ? "malformed" : JSON.stringify(human ? { ...evidence, blockers: ["Choose a deployment target."] } : evidence);',
 		'const outcome = human && !review ? "needs_human" : "completed";',
 		'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: output }], usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } } }));',
@@ -416,38 +421,54 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 
 	const humanId = createdId(await cli(project, "task", "create", "Human input", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
 	let requestAtPrompt;
-	const humanRun = commandContext(project, async () => true, async () => {
-		requestAtPrompt = JSON.parse(await cli(project, "task", "view", humanId, "--json")).task;
-		return "Use staging.";
+	const responses = ["Use staging.", "Proceed after review."];
+	const humanRun = commandContext(project, async () => true, async (_title, context) => {
+		requestAtPrompt ??= JSON.parse(await cli(project, "task", "view", humanId, "--json")).task;
+		assert.match(context, new RegExp(`Task: ${humanId}`));
+		assert.match(context, /Choose a deployment target\./);
+		assert.match(context, /Worker outcome: needs_human/);
+		return responses.shift();
 	});
+	const humanActions = ["Add response", "Add response", "Continue"];
+	humanRun.ctx.ui.select = async (_title, options) => {
+		assert.deepEqual(options, ["Add response", "Continue", "Defer"]);
+		return humanActions.shift();
+	};
 	await command.handler(humanId, humanRun.ctx);
 	assert.equal(requestAtPrompt.status, "Needs Human");
 	assert.deepEqual(requestAtPrompt.assignees, ["@human"]);
 	assert.match(requestAtPrompt.comments.at(-1).body, /Human request/);
 	const human = JSON.parse(await cli(project, "task", "view", humanId, "--json")).task;
-	assert.equal(human.status, "Open");
+	assert.equal(human.status, "Done");
 	assert.deepEqual(human.assignees, []);
 	const humanComments = human.comments.map(({ body, author }) => `${author}: ${body}`).join("\n");
 	assert.match(humanComments, /@workflow: ## Human request\nChoose a deployment target\.\n\nResponse: pending/);
 	assert.match(humanComments, /@human: ## Human response\nUse staging\./);
+	assert.match(humanComments, /@human: ## Human response\nProceed after review\./);
+	assert.match(humanComments, /@human: ## Human continuation\nContinue confirmed\./);
 
 	const deferredId = createdId(await cli(project, "task", "create", "Deferred human input", "--type", "task", "--priority", "Medium", "--ac", "Works"), "task");
-	const deferredRun = commandContext(project);
+	const deferredRun = commandContext(project, async () => false);
+	const deferredActions = ["Continue", "Defer"];
+	deferredRun.ctx.ui.select = async () => deferredActions.shift();
 	await command.handler(deferredId, deferredRun.ctx);
 	const deferred = JSON.parse(await cli(project, "task", "view", deferredId, "--json")).task;
 	assert.equal(deferred.status, "Needs Human");
 	assert.deepEqual(deferred.assignees, ["@human"]);
-	assert.match(deferred.comments.at(-1).body, /Response: pending/);
+	assert.match(deferred.comments.at(-2).body, /Response: pending/);
+	assert.match(deferred.comments.at(-1).body, /Deferred\./);
 	assert.ok(deferredRun.notifications.some(({ message }) => /Needs Human/.test(message)));
 
 	const { commands: restartedCommands } = await workflowHarness();
 	const restarted = commandContext(project, async () => true, async () => "Resume with staging.");
-	restarted.ctx.ui.select = async (_label, options) => options.find((option) => option.startsWith(`${deferredId}:`));
+	const resumedActions = ["Add response", "Continue"];
+	restarted.ctx.ui.select = async (_label, options) => options.find((option) => option.startsWith(`${deferredId}:`)) ?? resumedActions.shift();
 	await restartedCommands.get("devflow-inbox").handler("", restarted.ctx);
 	const resumed = JSON.parse(await cli(project, "task", "view", deferredId, "--json")).task;
 	assert.equal(resumed.status, "Open");
 	assert.deepEqual(resumed.assignees, []);
-	assert.match(resumed.comments.at(-1).body, /Resume with staging/);
+	assert.match(resumed.comments.map(({ body }) => body).join("\n"), /Resume with staging/);
+	assert.match(resumed.comments.at(-1).body, /Continue confirmed/);
 });
 
 test("implement-run locks only its session through cancellation and cleanup in every worker phase", { timeout: 60_000 }, async (t) => {
@@ -523,7 +544,10 @@ test("implement-run locks only its session through cancellation and cleanup in e
 			assert.match(other.messages.at(-1), /Refine Backlog.md draft/);
 			const humanId = createdId(await cli(project, "task", "create", "Human", "--type", "task"), "task");
 			await cli(project, "task", "edit", humanId, "--status", "Needs Human", "--assignee", "@human");
-			await other.commands.get("devflow-inbox").handler("", commandContext(project, undefined, async () => "Proceed", async (_title, options) => options[0]).ctx);
+			const inbox = commandContext(project, undefined, async () => "Proceed");
+			const actions = ["Add response", "Continue"];
+			inbox.ctx.ui.select = async (_title, options) => options[0].startsWith(`${humanId}:`) ? options[0] : actions.shift();
+			await other.commands.get("devflow-inbox").handler("", inbox.ctx);
 			assert.equal(JSON.parse(await cli(project, "task", "view", humanId, "--json")).task.status, "Open");
 			assert.equal(await other.events.get("input")({}, otherSession.ctx), undefined);
 			assert.deepEqual(controller.terminalInput("\x1b"), [{ consume: true }]);

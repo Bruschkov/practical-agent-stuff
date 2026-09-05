@@ -62,6 +62,6 @@
 ## Phase 9 — Session control and HITL recovery
 
 - [x] Keep the Pi session that started `/implement-run` busy until the controller settles; show its phase/task, allow cancel/status only, and keep refine/inbox sessions usable.
-- [ ] Replace one-shot `Needs Human` input with a same-session, contextual dialogue: show the task, request, evidence, and options; persist each reply; only a human-confirmed continuation resumes work.
+- [x] Replace one-shot `Needs Human` input with a same-session, contextual dialogue: show the task, request, evidence, and options; persist each reply; only a human-confirmed continuation resumes work.
 - [ ] On reload, cancellation, or child failure, recover a started task from `In Progress` rather than stranding it.
 - [ ] Reconcile completed leaves into their sub-feature state before final feature approval; do not ask humans to infer or manually apply parent status changes.

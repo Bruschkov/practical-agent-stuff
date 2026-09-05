@@ -13,7 +13,7 @@ Versioned coding-agent assets used selectively across projects.
 
 ## Repo Rules
 - Keep versioned source skills; do not track local `.agents/skills/` copies.
-- Read the relevant `.agents/docs/` page before changing an extension or its contract tests.
+- Read the relevant `.agents/docs/` page and accepted ADR before changing an extension or its contract tests.
 - Keep optional integrations non-blocking; do not add hard dependencies solely for them.
 - Prioritize end-user documentation; keep maintainer-only workflow detail in `.agents/docs/`.
 
