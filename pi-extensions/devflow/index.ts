@@ -8,9 +8,11 @@ import {
 	truncateHead,
 	withFileMutationQueue,
 	type ExtensionAPI,
+	type ExtensionCommandContext,
+	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { matchesKey, type AutocompleteItem } from "@earendil-works/pi-tui";
 import { implementerPrompt, reviewerPrompt, reconcilerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
 
 export { implementerPrompt, reviewerPrompt, reconcilerPrompt, runChildPi, type ChildPiRequest, type ChildPiResult } from "./worker-runner.ts";
@@ -363,7 +365,8 @@ async function persistReview(pi: ExtensionAPI, root: string, task: WorkflowTask,
 }
 
 async function reconcileFeature(pi: ExtensionAPI, root: string, featureId: string, ctx: any) {
-	const result = await runChildPi({ cwd: root, prompt: reconcilerPrompt(featureId), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel, readOnly: true });
+	const result = await runChildPi({ cwd: root, prompt: reconcilerPrompt(featureId), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel, readOnly: true }, ctx.signal);
+	ctx.signal?.throwIfAborted();
 	if (result.failure || !result.outcome) throw new Error(result.failure || "Reconciler did not return an outcome.");
 	if (result.outcome === "needs_human") {
 		await requestHuman(pi, root, featureId, requestText(result.output), ctx);
@@ -431,7 +434,7 @@ async function unstageFeatureFiles(pi: ExtensionAPI, root: string, files: string
 	if (files.length) await pi.exec("git", ["restore", "--staged", "--", ...files], { cwd: root, timeout: 30_000 });
 }
 
-async function approveFeature(pi: ExtensionAPI, root: string, feature: WorkflowTask, ctx: any) {
+async function approveFeature(pi: ExtensionAPI, root: string, feature: WorkflowTask, ctx: any, onFeedback: (message: string) => void) {
 	if (!ctx.hasUI) return false;
 	const { files } = await featureOwnedFiles(pi, root, feature.id);
 	let stagedTree: string | undefined;
@@ -443,17 +446,21 @@ async function approveFeature(pi: ExtensionAPI, root: string, feature: WorkflowT
 			const feedback = await ctx.ui.input(`Final review feedback: ${feature.id}`, "Optional: ask a question or describe a requested change. The feature will remain In Review.");
 			if (feedback?.trim()) {
 				await runBacklog(pi, root, ["task", "edit", feature.id, "--comment", `## Final review feedback\n${feedback.trim()}`, "--comment-author", "@human"]);
-				pi.sendUserMessage(`The human declined final approval for Backlog.md feature ${feature.id} and left this feedback:\n\n${feedback.trim()}\n\nDiscuss it before changing anything. If the human explicitly requests a change, record it on the affected leaf and rerun the feature workflow.`);
+				onFeedback(`The human declined final approval for Backlog.md feature ${feature.id} and left this feedback:\n\n${feedback.trim()}\n\nDiscuss it before changing anything. If the human explicitly requests a change, record it on the affected leaf and rerun the feature workflow.`);
 			}
 			return false;
 		}
 		let commit = "No recorded file changes to commit.";
 		if (stagedTree) {
 			if (await indexTree(pi, root) !== stagedTree) throw new Error("Git index changed after final review; no commit was made.");
+			ctx.signal?.throwIfAborted();
+			ctx.ui.setStatus("devflow", `${feature.id}: committing`);
+			// Once the commit starts, finish recording its outcome before releasing the controller.
 			const result = await pi.exec("git", ["commit", "-m", `Complete ${feature.id}: ${feature.title ?? "Untitled"}`], { cwd: root, timeout: 30_000 });
 			if (result.code !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || "Could not commit staged feature files.");
 			commit = (await pi.exec("git", ["rev-parse", "--short", "HEAD"], { cwd: root, timeout: 30_000 })).stdout.trim();
 		}
+		ctx.ui.setStatus("devflow", `${feature.id}: recording final approval`);
 		const args = ["task", "edit", feature.id, "--status", "Done", "--comment", `## Final feature approval\nApproved after reviewing the final summary, checks, review evidence, reconciliation, and staged scoped diff.\n\nCommit: ${commit}`, "--comment-author", "@human"];
 		for (const criterion of feature.acceptanceCriteria) args.push("--check-ac", String(criterion.index));
 		await runBacklog(pi, root, args);
@@ -641,6 +648,46 @@ async function publishRefinement(pi: ExtensionAPI, root: string, input: BacklogI
 }
 
 export default function devflowExtension(pi: ExtensionAPI) {
+	let activeRun: { abort: AbortController; status: string; settled: Promise<void> } | undefined;
+	const busyMessage = () => `implement-run busy: ${activeRun?.status}. Use /devflow-status or /devflow-cancel (Esc to cancel, s for status).`;
+	const refuseWhileBusy = (ctx: ExtensionContext) => {
+		if (!activeRun) return false;
+		ctx.ui.notify(busyMessage(), "warning");
+		return true;
+	};
+	pi.on("input", (_event, ctx) => {
+		if (refuseWhileBusy(ctx)) return { action: "handled" };
+	});
+	pi.on("tool_call", () => {
+		if (activeRun) return { block: true, reason: busyMessage(), terminate: true };
+	});
+	pi.on("user_bash", () => {
+		if (activeRun) return { result: { output: busyMessage(), exitCode: 1, cancelled: false, truncated: false } };
+	});
+	const guardSession = (_event: unknown, ctx: ExtensionContext) => {
+		if (refuseWhileBusy(ctx)) return { cancel: true };
+	};
+	pi.on("session_before_switch", guardSession);
+	pi.on("session_before_fork", guardSession);
+	pi.on("session_before_tree", guardSession);
+	pi.on("session_before_compact", guardSession);
+	pi.on("session_shutdown", async () => {
+		activeRun?.abort.abort();
+		await activeRun?.settled;
+	});
+	pi.registerCommand("devflow-status", {
+		description: "Show this session's implementation controller status",
+		handler: async (_args, ctx) => { ctx.ui.notify(activeRun ? busyMessage() : "No implementation controller running in this session", "info"); },
+	});
+	pi.registerCommand("devflow-cancel", {
+		description: "Request cancellation of this session's implementation controller",
+		handler: async (_args, ctx) => {
+			if (!activeRun) return void ctx.ui.notify("No implementation controller running in this session", "info");
+			activeRun.abort.abort();
+			ctx.ui.notify("Cancellation requested; waiting for controller cleanup", "info");
+		},
+	});
+
 	let featureCompletions: AutocompleteItem[] = [];
 	const refreshFeatureCompletions = async (cwd: string) => {
 		try {
@@ -673,6 +720,7 @@ export default function devflowExtension(pi: ExtensionAPI) {
 	pi.registerCommand("devflow-init", {
 		description: "Initialize or reconcile the Backlog.md workflow configuration",
 		handler: async (_args, ctx) => {
+			if (refuseWhileBusy(ctx)) return;
 			if (!ctx.hasUI) {
 				ctx.ui.notify("devflow-init requires interactive mode", "error");
 				return;
@@ -715,6 +763,7 @@ export default function devflowExtension(pi: ExtensionAPI) {
 	pi.registerCommand("devflow-commit-backlog", {
 		description: "Commit pending Backlog.md workflow changes",
 		handler: async (_args, ctx) => {
+			if (refuseWhileBusy(ctx)) return;
 			if (!ctx.hasUI) return void ctx.ui.notify("devflow-commit-backlog requires interactive mode", "error");
 			try {
 				const commit = await commitBacklogChanges(pi, await projectRoot(pi, ctx.cwd), "Commit Backlog.md workflow changes");
@@ -728,6 +777,7 @@ export default function devflowExtension(pi: ExtensionAPI) {
 	pi.registerCommand("devflow-inbox", {
 		description: "List and resolve pending human requests",
 		handler: async (_args, ctx) => {
+			if (refuseWhileBusy(ctx)) return;
 			if (!ctx.hasUI) return void ctx.ui.notify("devflow-inbox requires interactive mode", "error");
 			const root = await projectRoot(pi, ctx.cwd);
 			try {
@@ -755,7 +805,70 @@ export default function devflowExtension(pi: ExtensionAPI) {
 			const matches = featureCompletions.filter((item) => item.value.toLowerCase().startsWith(query) || item.label.toLowerCase().includes(query));
 			return matches.length ? matches : null;
 		},
-		handler: async function implementRun(args, ctx) {
+		handler: async (args, ctx) => {
+			if (refuseWhileBusy(ctx)) return;
+			if (!ctx.isIdle()) return void ctx.ui.notify("Wait for the main session to settle before starting implement-run", "warning");
+			const abort = new AbortController();
+			let settle!: () => void;
+			const run = { abort, status: `${args.trim() || "Feature selection"}: starting`, settled: new Promise<void>((resolve) => { settle = resolve; }) };
+			activeRun = run;
+			let prompting = false;
+			let unsubscribe: (() => void) | undefined;
+			let feedback: string | undefined;
+			const showStatus = () => {
+				const text = `${abort.signal.aborted ? "Cancelling" : "Busy"} — ${run.status}`;
+				ctx.ui.setStatus("devflow", text);
+				ctx.ui.setWidget("devflow", [text, prompting ? "Respond to the workflow prompt. Esc / Ctrl+C: cancel controller." : "Esc / Ctrl+C: cancel · s: status. Other input locked until settled."]);
+			};
+			const prompt = async <T>(title: string, show: () => Promise<T>): Promise<T> => {
+				abort.signal.throwIfAborted();
+				const previous = run.status;
+				run.status = `${title} (waiting for human)`;
+				prompting = true;
+				showStatus();
+				try {
+					const value = await show();
+					abort.signal.throwIfAborted();
+					return value;
+				} finally {
+					prompting = false;
+					run.status = previous;
+					showStatus();
+				}
+			};
+			const controllerCtx: ExtensionCommandContext = { ...ctx, signal: abort.signal, ui: {
+				...ctx.ui,
+				setStatus: (_key, text) => { if (text) run.status = text; showStatus(); },
+				select: (title, options, opts) => prompt(title, () => ctx.ui.select(title, options, { ...opts, signal: abort.signal })),
+				input: (title, placeholder, opts) => prompt(title, () => ctx.ui.input(title, placeholder, { ...opts, signal: abort.signal })),
+				confirm: (title, message, opts) => prompt(title, () => ctx.ui.confirm(title, message, { ...opts, signal: abort.signal })),
+			} };
+			try {
+				showStatus();
+				abort.signal.addEventListener("abort", showStatus, { once: true });
+				if (ctx.mode === "tui") unsubscribe = ctx.ui.onTerminalInput((data) => {
+					if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) abort.abort();
+					else if (prompting) return;
+					else if (matchesKey(data, "s")) ctx.ui.notify(busyMessage(), "info");
+					return { consume: true };
+				});
+				await implementRun(args, controllerCtx, (message) => { feedback = message; });
+			} catch (error: any) {
+				ctx.ui.notify(`implement-run ${abort.signal.aborted ? "cancelled" : `failed: ${error?.message ?? String(error)}`}`, abort.signal.aborted ? "info" : "error");
+			} finally {
+				unsubscribe?.();
+				abort.signal.removeEventListener("abort", showStatus);
+				activeRun = undefined;
+				ctx.ui.setStatus("devflow", undefined);
+				ctx.ui.setWidget("devflow", undefined);
+				settle();
+			}
+			if (feedback && !abort.signal.aborted) pi.sendUserMessage(feedback);
+		},
+	});
+
+	async function implementRun(args: string, ctx: ExtensionCommandContext, onFeedback: (message: string) => void): Promise<void> {
+			ctx.signal?.throwIfAborted();
 			let requestedId = args.trim();
 			const root = await projectRoot(pi, ctx.cwd);
 			if (!requestedId) {
@@ -770,15 +883,20 @@ export default function devflowExtension(pi: ExtensionAPI) {
 			let taskId = requestedId;
 			let started = false;
 			try {
+				ctx.signal?.throwIfAborted();
+				ctx.ui.setStatus("devflow", `${requestedId}: selecting runnable work`);
 				const requestedTask = JSON.parse(await runBacklog(pi, root, ["task", "view", requestedId, "--json"])).task as WorkflowTask;
 				if (requestedTask.type === "feature") {
 					taskId = await runnableFeatureTask(pi, root, requestedId) ?? "";
 					if (!taskId) {
 						if (!await featureReadyForReconciliation(pi, root, requestedId)) return void ctx.ui.notify(`${requestedId}: no runnable descendant leaf tasks`, "info");
+						ctx.signal?.throwIfAborted();
+						ctx.ui.setStatus("devflow", `${requestedId}: reconciling`);
 						const outcome = await reconcileFeature(pi, root, requestedId, ctx);
 						if (outcome !== "completed") return void ctx.ui.notify(`${requestedId}: Needs Human`, "warning");
 						const feature = JSON.parse(await runBacklog(pi, root, ["task", "view", requestedId, "--json"])).task as WorkflowTask;
-						const approved = await approveFeature(pi, root, feature, ctx);
+						ctx.ui.setStatus("devflow", `${requestedId}: final approval`);
+						const approved = await approveFeature(pi, root, feature, ctx, onFeedback);
 						return void ctx.ui.notify(`${requestedId}: ${approved ? "Done" : ctx.hasUI ? "awaiting final human approval" : "final human approval requires interactive mode"}`, approved ? "success" : "warning");
 					}
 				}
@@ -786,11 +904,16 @@ export default function devflowExtension(pi: ExtensionAPI) {
 				if (task.type !== "task" || !["Open", "Rework"].includes(task.status) || !task.isReady || task.readiness?.isBlocked || task.assignees?.includes("@human") || task.subtasks.length) throw new Error(`${taskId} is not a ready, unblocked leaf task.`);
 				let attempt = reworkAttempts(task);
 				const implement = async (rework = false) => {
+					ctx.signal?.throwIfAborted();
+					ctx.ui.setStatus("devflow", `${task.id}: ${rework ? "starting rework" : "starting implementation"}`);
 					await runBacklog(pi, root, ["task", "edit", task.id, "--status", "In Progress", "--comment", rework ? `Rework implementation worker started (attempt ${attempt} of ${maxReworkAttempts}).` : "Implementation worker started.", "--comment-author", "@workflow"]);
 					started = true;
+					ctx.signal?.throwIfAborted();
 					ctx.ui.notify(`${task.id}: implementation started`, "info");
 					ctx.ui.setStatus("devflow", `${task.id}: implementing`);
-					const result = await runChildPi({ cwd: root, prompt: implementerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel }).finally(() => ctx.ui.setStatus("devflow", undefined));
+					const result = await runChildPi({ cwd: root, prompt: implementerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel }, ctx.signal);
+					ctx.signal?.throwIfAborted();
+					ctx.ui.setStatus("devflow", `${task.id}: persisting implementation`);
 					if (result.failure || !result.outcome) throw new Error(result.failure || "Worker did not return an outcome.");
 					const evidence = implementationEvidence(result.output, task);
 					if (result.outcome === "completed" && !completedEvidence(evidence, task)) throw new Error("Worker marked completion without meeting every criterion and check.");
@@ -807,26 +930,29 @@ export default function devflowExtension(pi: ExtensionAPI) {
 
 				const initialOutcome = await implement();
 				if (initialOutcome !== "completed") {
-					if (requestedTask.type === "feature" && ["blocked", "needs_human"].includes(initialOutcome)) return implementRun(requestedId, ctx);
+					if (requestedTask.type === "feature" && ["blocked", "needs_human"].includes(initialOutcome)) return implementRun(requestedId, ctx, onFeedback);
 					return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
 				}
 				while (true) {
+					ctx.signal?.throwIfAborted();
 					ctx.ui.setStatus("devflow", `${task.id}: reviewing`);
-					const review = await runChildPi({ cwd: root, prompt: reviewerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel, readOnly: true }).finally(() => ctx.ui.setStatus("devflow", undefined));
+					const review = await runChildPi({ cwd: root, prompt: reviewerPrompt(task.id), model: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined, thinkingLevel: ctx.thinkingLevel, readOnly: true }, ctx.signal);
+					ctx.signal?.throwIfAborted();
+					ctx.ui.setStatus("devflow", `${task.id}: persisting review`);
 					if (review.failure || !review.outcome) {
 						ctx.ui.notify(`${task.id}: review failed: ${review.failure || "Worker did not return an outcome."}`, "error");
-						if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
+						if (requestedTask.type === "feature") return implementRun(requestedId, ctx, onFeedback);
 						return;
 					}
 					if (review.outcome !== "completed") {
 						if (review.outcome === "needs_human") {
 							const answered = await requestHuman(pi, root, task.id, requestText(review.output), ctx);
 							ctx.ui.notify(`${task.id}: ${answered ? "human response recorded" : "Needs Human"}`, answered ? "success" : "warning");
-							if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
+							if (requestedTask.type === "feature") return implementRun(requestedId, ctx, onFeedback);
 							return;
 						}
 						ctx.ui.notify(`${task.id}: In Review (${review.outcome})`, "warning");
-						if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
+						if (requestedTask.type === "feature") return implementRun(requestedId, ctx, onFeedback);
 						return;
 					}
 					const evidence = reviewEvidence(review.output);
@@ -834,20 +960,20 @@ export default function devflowExtension(pi: ExtensionAPI) {
 					if (evidence.verdict === "approved") {
 						await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Done"]);
 						ctx.ui.notify(`${task.id}: Done`, "success");
-						if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
+						if (requestedTask.type === "feature") return implementRun(requestedId, ctx, onFeedback);
 						return;
 					}
 					if (attempt >= maxReworkAttempts) {
 						await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Needs Human", "--assignee", "@human", "--comment", `Rework cap reached after ${maxReworkAttempts} attempts. Review findings are recorded above.`, "--comment-author", "@workflow"]);
 						ctx.ui.notify(`${task.id}: Needs Human (rework cap reached)`, "warning");
-						if (requestedTask.type === "feature") return implementRun(requestedId, ctx);
+						if (requestedTask.type === "feature") return implementRun(requestedId, ctx, onFeedback);
 						return;
 					}
 					attempt += 1;
 					await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Rework", "--comment", `Rework attempt: ${attempt}/${maxReworkAttempts}.`, "--comment-author", "@workflow"]);
 					const reworkOutcome = await implement(true);
 					if (reworkOutcome !== "completed") {
-						if (requestedTask.type === "feature" && ["blocked", "needs_human"].includes(reworkOutcome)) return implementRun(requestedId, ctx);
+						if (requestedTask.type === "feature" && ["blocked", "needs_human"].includes(reworkOutcome)) return implementRun(requestedId, ctx, onFeedback);
 						return void ctx.ui.notify(`${task.id}: implementation did not complete`, "warning");
 					}
 				}
@@ -857,14 +983,15 @@ export default function devflowExtension(pi: ExtensionAPI) {
 						await runBacklog(pi, root, ["task", "edit", taskId, "--status", "Open", "--comment", `Implementation failed: ${error?.message ?? String(error)}`, "--comment-author", "@workflow"]);
 					} catch { /* Preserve the original failure when recovery also fails. */ }
 				}
+				if (ctx.signal?.aborted) throw error;
 				ctx.ui.notify(`implement-run failed: ${error?.message ?? String(error)}`, "error");
 			}
-		},
-	});
+	}
 
 	pi.registerCommand("refine", {
 		description: "Create or resume a Backlog.md refinement draft",
 		handler: async (args, ctx) => {
+			if (refuseWhileBusy(ctx)) return;
 			if (!ctx.hasUI) {
 				ctx.ui.notify("refine requires interactive mode", "error");
 				return;

@@ -12,7 +12,7 @@ Repo operating manual for future coding agents.
 - Repo overview and install notes: [`../../README.md`](../../README.md)
 - Backlog handoff extension docs: [`../../pi-extensions/backlog-handoff/README.md`](../../pi-extensions/backlog-handoff/README.md)
 - Devflow end-user guide: [`../../pi-extensions/devflow/README.md`](../../pi-extensions/devflow/README.md)
-- Devflow maintainer details: [`devflow.md`](devflow.md)
+- Devflow maintainer details: [`devflow.md`](devflow.md) — package/CLI contracts, [controller session control](devflow.md#controller-session-control), recovery limits, and verification.
 - Backlog handoff example: [`../../pi-extensions/backlog-handoff/examples/generic-fullstack/README.md`](../../pi-extensions/backlog-handoff/examples/generic-fullstack/README.md)
 
 ## Rules / workflow

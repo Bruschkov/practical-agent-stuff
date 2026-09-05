@@ -5,6 +5,7 @@
 
 ## Package boundary
 - The package manifest loads `index.ts` as a Pi extension.
+- `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, and `typebox` are explicit `*` peer dependencies. `pi-tui` supplies native `matchesKey` decoding for controller cancellation/status keys; source-local Node tests cannot rely on Pi's nested dependency being importable from this package.
 - `backlog.md` is a package-local runtime dependency with the compatible range `^1.4.0`; use its locally installed CLI, not a Homebrew or other global installation.
 - The lockfile records the resolved CLI and peer-dependency graph required by `npm ci`. Do not change the supported range without validating the CLI contract.
 - For source-local development, run `npm ci --prefix pi-extensions/devflow` before loading it. Use `npm install --prefix pi-extensions/devflow` only to resynchronize the lockfile after a manifest change, then verify with `npm ci`.
@@ -40,8 +41,16 @@
 - Use at most one `/implement-run` controller per Git worktree. Optional parallel interactive sessions may refine upcoming work or handle `/devflow-inbox`; scoped backlog commits and final-approval index checks protect unrelated implementation changes.
 - The implementation-controller session owns final feature approval. It runs until completion or a persisted pause; it is not a permanent daemon.
 
+## Controller session control
+- `/implement-run` refuses an active main agent or an existing controller in the same extension instance. Its session-local guard spans feature selection, all descendant/rework runs, evidence persistence, reconciliation, human prompts, final approval, and cleanup. Footer status and a widget show the current task/phase and `Busy` or `Cancelling`. This is extension-owned state, not an override of Pi's `ctx.isIdle()` or a cross-process worktree lock.
+- In TUI mode, `ctx.ui.onTerminalInput` consumes ordinary text, pasted commands, and app shortcuts before dispatch. Esc/Ctrl+C requests controller cancellation, including during its dialogs; `s` reports status outside dialogs. Only the controller's own `select`/`input`/`confirm` dialogs temporarily accept other input. Remove the listener and clear both status displays only when the controller settles.
+- `/devflow-status` reports the current session's controller; `/devflow-cancel` requests cancellation without waiting for cleanup. The TUI input lock requires using the hotkeys while busy. Guards also intercept ordinary Pi input, tool calls, user bash, session switch/fork/tree/compaction, and other devflow commands. Pi dispatches extension commands before `input`, so an input hook alone is insufficient; keep explicit devflow command guards. This is not a universal interceptor for third-party commands invoked programmatically.
+- One `AbortController` supplies every implementer, reviewer, reconciler, and controller-owned dialog. Check cancellation before starting more work and after awaited workers/dialogs; late dialog answers must not override cancellation. `session_shutdown` aborts and awaits the same controller settlement. Separate Pi instances remain available for refinement and inbox handling; the one-controller-per-worktree convention still applies.
+- Cancellation waits for in-flight Backlog.md writes and cleanup rather than killing persistence midway. Before a final commit starts, cancellation aborts approval and unstages the controller's owned paths. Once the commit starts, finish recording its outcome before releasing the controller. Do not treat a cancellation request as proof that cleanup or persistence has finished.
+- Persist declined-approval feedback immediately, but send its main-session discussion message only after releasing the guard; sending it earlier would be swallowed by the busy input hook.
+
 ## Implementation workers
-- Core child-Pi runner and `/implement-run` behavior must work without `backlog-handoff`.
+- Core child-Pi runner and `/implement-run` behavior must work without `backlog-handoff`. Keep child-Pi extension discovery enabled unless isolation is explicitly required.
 - `runChildPi` (exported by `pi-extensions/devflow/index.ts`) starts an isolated `pi --mode json -p --no-session` child in the project cwd. It loads this extension with `PI_DEVFLOW_WORKER=1`, inherits the selected model and thinking level, and lets Pi rediscover project context files and installed resources. It does not pass `--no-extensions`, so an installed project- or global-level `backlog-handoff` is available to the worker. A `readOnly` child additionally receives only `read`, `grep`, `find`, `ls`, `backlog`, and `complete_transition`, plus `PI_DEVFLOW_REVIEWER=1`.
 - The runner consumes JSON `message_end` events, aggregates assistant usage, returns bounded final output and stderr (2,000 lines/50 KB), and reports non-zero exit, cancellation, invalid completion, or a missing `complete_transition` as a failure. Its result contains the validated `completed`, `needs_human`, `blocked`, or `failed` outcome when present.
 - A child worker sets `PI_DEVFLOW_WORKER=1`. Only in that mode does the extension register `complete_transition`; it is the worker's single terminating final action and accepts only `completed`, `needs_human`, `blocked`, or `failed`.
@@ -58,17 +67,13 @@
 
 ## Human-request inbox
 - `/implement-run` prompts immediately after persisting a human request when UI is available. Dismissed or unavailable prompts remain resumable in `Needs Human`.
-- `/devflow-inbox` is a manual recovery entry point, not a required daemon or dedicated session. From any interactive Pi session, it lists `Needs Human` tickets, lets the user select one, and shows its latest persisted `@workflow` request.
+- `/devflow-inbox` is a manual recovery entry point, not a required daemon or dedicated session. From an interactive Pi session without its own active implementation controller, it lists `Needs Human` tickets, lets the user select one, and shows its latest persisted `@workflow` request.
 - A non-empty response is recorded as an `@human` comment, clears `@human`, and reopens the ticket to `Open`. Cancelling or submitting no response leaves it in `Needs Human`; rerun `/implement-run` when no active feature controller remains to resume it.
 
-## Planned reliability fixes
-
-Not implemented; see `TODO.md` Phase 9 before changing controller flow.
-
-- The session running `/implement-run` must remain busy, show its current task/phase, and accept only cancellation or status checks until its controller settles. This is session-local: separate refinement and inbox sessions remain usable.
-- `Needs Human` must be a same-session dialogue, not a context-free one-shot prompt. Every turn shows the task, unresolved question, relevant evidence, and available options; persist each reply. Only explicit human confirmation resumes the controller.
-- Reload, cancellation, and child-process failure must never leave a ticket stranded in `In Progress`.
-- Reconciliation must update completed sub-features from validated leaf evidence before requesting final feature approval. Do not ask the human to infer or manually apply parent statuses.
+## Current recovery limits
+- Human requests still use one-shot input; a non-empty answer reopens the ticket without a separate continuation confirmation. Session locking does not introduce a contextual dialogue protocol.
+- Live implementation failure/cancellation uses the existing best-effort recovery to `Open`. Review cancellation leaves `In Review`; cancellation is not a blanket reset of every started workflow phase. Graceful shutdown awaits cleanup, but there is no startup scan recovering stale `In Progress` tickets after abrupt process loss or failed persistence.
+- Reconciliation checks parent criteria but does not update completed sub-feature statuses before feature approval.
 
 ## Workflow configuration
 - The required types, statuses, priorities, refinement approval boundary, HITL handling, and Definition of Done are defined by [Adopt a Backlog.md workflow contract](decisions/2026-09-03-adopt-backlog-workflow-contract.md).
@@ -78,6 +83,7 @@ Not implemented; see `TODO.md` Phase 9 before changing controller flow.
 
 ## Verification
 - `npm ci --prefix pi-extensions/devflow && node --test tests/pi-extensions/devflow/contract.test.mjs`
+- Session-control contracts use fake Pi children and real temporary Backlog.md repositories. They cover input/command/lifecycle guards, independent refine/inbox instances, cancellation in all three worker roles, retained locking during delayed recovery, refusal of an active main agent, setup failure, picker cancellation, and cancellation of staged final approval despite a late affirmative answer. These are harness tests, not live-terminal UX verification.
 - The contract test covers the package-local CLI; the structured `backlog` tool (including bounded output, serialized writes, and reviewer write refusal); implementer, reviewer, and reconciler prompts; worker-only `complete_transition` outcome validation and termination; the child-Pi runner's cwd/model/thinking inheritance, read-only tool allowlist, JSON result parsing, bounded output, usage capture, malformed completion failure, and cancellation; end-to-end `/implement-run` implementation/review evidence persistence, approval to `Done`, staged final feature review/commit (including declined feedback, owned-path-only commits, pre-existing/index-changed staged-work refusal, and scoped diff), reconciliation only after all descendant leaves are `Done`, two rework retries, capped `Needs Human` assignment, implementation `needs_human` persistence before UI, answered reopening, deferred/cancelled human-input retention and restart resolution through `/devflow-inbox`, malformed-evidence recovery to `Open`, blocked-task refusal, and fixture-backed recommendation plus run-to-exhaustion feature-descendant selection (hierarchy, dependency readiness, rework, priority, and Backlog order) excluding blocked, dependency-waiting, and human-owned leaves; `/devflow-inbox` listing and resolution; `/refine` draft creation/resume; valid handoff discovery, source-format preservation, post-publication scoped `backlog/` commit, and post-commit move to `processed/`; scoped commit retry without republishing; approval/refusal/cancellation with rejected drafts retained; hierarchy/dependency publication and archival; initialization; idempotent reruns; required configuration validation; Git refusal; and declined configuration reconciliation.
 
 ## Related

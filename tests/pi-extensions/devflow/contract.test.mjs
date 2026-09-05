@@ -28,7 +28,7 @@ function createdId(output, kind) {
 	return match[1];
 }
 
-async function workflowHarness() {
+async function workflowHarness(beforeExec = async () => {}) {
 	const commands = new Map();
 	const events = new Map();
 	const messages = [];
@@ -45,6 +45,7 @@ async function workflowHarness() {
 			messages.push(message);
 		},
 		async exec(command, args, options = {}) {
+			await beforeExec(command, args, options);
 			try {
 				const result = await run(command, args, { cwd: options.cwd, maxBuffer: 1024 * 1024 });
 				return { ...result, code: 0, killed: false };
@@ -93,11 +94,17 @@ async function registeredTools(exec = async () => ({ stdout: "", stderr: "", cod
 function commandContext(cwd, confirm = async () => true, input = async () => undefined, select = async () => undefined) {
 	const notifications = [];
 	const statuses = [];
+	const widgets = [];
+	const listeners = new Set();
 	return {
 		notifications,
 		statuses,
+		widgets,
+		terminalInput: (data) => [...listeners].map((listener) => listener(data)),
 		ctx: {
 			hasUI: true,
+			mode: "tui",
+			isIdle: () => true,
 			cwd,
 			ui: {
 				confirm,
@@ -108,6 +115,11 @@ function commandContext(cwd, confirm = async () => true, input = async () => und
 				},
 				setStatus(_key, text) {
 					statuses.push(text);
+				},
+				setWidget(_key, content) { widgets.push(content); },
+				onTerminalInput(listener) {
+					listeners.add(listener);
+					return () => listeners.delete(listener);
 				},
 			},
 		},
@@ -361,7 +373,12 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	const startedRun = commandContext(project);
 	await command.handler(taskId, startedRun.ctx);
 	assert.ok(startedRun.notifications.some(({ message }) => message === `${taskId}: implementation started`));
-	assert.deepEqual(startedRun.statuses, [`${taskId}: implementing`, undefined, `${taskId}: reviewing`, undefined]);
+	assert.ok(startedRun.statuses.includes(`Busy — ${taskId}: implementing`));
+	assert.ok(startedRun.statuses.includes(`Busy — ${taskId}: reviewing`));
+	assert.deepEqual(startedRun.statuses.filter((status) => status === undefined), [undefined]);
+	assert.equal(startedRun.statuses.at(-1), undefined);
+	assert.equal(startedRun.widgets.at(-1), undefined);
+	assert.deepEqual(startedRun.terminalInput("ordinary input"), []);
 	const task = JSON.parse(await cli(project, "task", "view", taskId, "--json")).task;
 	assert.equal(task.status, "Done");
 	assert.equal(task.implementationPlan, "- Change code");
@@ -431,6 +448,143 @@ test("implement-run handles fake-Pi success, malformed evidence, and blocked-tas
 	assert.equal(resumed.status, "Open");
 	assert.deepEqual(resumed.assignees, []);
 	assert.match(resumed.comments.at(-1).body, /Resume with staging/);
+});
+
+test("implement-run locks only its session through cancellation and cleanup in every worker phase", { timeout: 60_000 }, async (t) => {
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-session-control-"));
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Session control", "--defaults", "--integration-mode", "none");
+	const fakePi = path.join(project, "fake-pi.mjs");
+	const reached = path.join(project, "reached");
+	await writeFile(fakePi, [
+		'import { readFileSync, writeFileSync } from "node:fs";',
+		'const prompt = process.argv.at(-1);',
+		'const phase = prompt.includes("reconciliation worker") ? "reconciling" : prompt.includes("read-only reviewer") ? "reviewing" : "implementing";',
+		'if (phase === readFileSync("hold", "utf8")) { writeFileSync("reached", phase); setInterval(() => {}, 1000); }',
+		'else {',
+		'  const output = phase === "reviewing" ? { verdict: "approved", findings: [] } : { summary: "Implemented", plan: [], modifiedFiles: [], acceptanceCriteria: [{ criterion: "Works", status: "met", evidence: "Checked" }], checks: [], documentation: { impact: "none", evidence: "None" }, blockers: [] };',
+		'  console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: JSON.stringify(output) }] } }));',
+		'  console.log(JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "complete_transition", details: { outcome: "completed" } } }));',
+		'}',
+	].join("\n"));
+	const previousScript = process.argv[1];
+	process.argv[1] = fakePi;
+	t.after(() => { process.argv[1] = previousScript; });
+	const waitFor = async (check) => {
+		for (let i = 0; i < 500; i++) {
+			if (await check()) return;
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		assert.fail("Controller did not reach the expected phase");
+	};
+	let recoveryReached = false;
+	const recovery = Promise.withResolvers();
+	const { commands, events } = await workflowHarness(async (_command, args) => {
+		if (args[0] === "task" && args[1] === "edit" && args.includes("Open") && args.some((arg) => arg.startsWith("Implementation failed:"))) {
+			recoveryReached = true;
+			await recovery.promise;
+		}
+	});
+	await commands.get("devflow-init").handler("", commandContext(project).ctx);
+
+	for (const phase of ["implementing", "reviewing", "reconciling"]) {
+		await writeFile(path.join(project, "hold"), phase);
+		await writeFile(reached, "");
+		const featureId = createdId(await cli(project, "task", "create", phase, "--type", "feature"), "task");
+		const leafId = createdId(await cli(project, "task", "create", "Leaf", "--type", "task", "--parent", featureId, "--ac", "Works"), "task");
+		const nextId = createdId(await cli(project, "task", "create", "Next", "--type", "task", "--parent", featureId, "--ac", "Works"), "task");
+		const controller = commandContext(project);
+		const running = commands.get("implement-run").handler(featureId, controller.ctx);
+		t.after(async () => { recovery.resolve(); await commands.get("devflow-cancel").handler("", controller.ctx); await running; });
+		await waitFor(async () => (await readFile(reached, "utf8")) === phase);
+		const taskId = phase === "reconciling" ? featureId : leafId;
+		await commands.get("devflow-status").handler("", controller.ctx);
+		assert.match(controller.notifications.at(-1).message, new RegExp(`${taskId}: ${phase}`));
+		assert.deepEqual(controller.terminalInput("s"), [{ consume: true }]);
+		for (const text of ["ordinary prompt", "/refine surprise", "/reload", "!touch surprise", "\x10", "\x1b[200~/devflow-init\r\x1b[201~"]) {
+			assert.deepEqual(controller.terminalInput(text), [{ consume: true }]);
+		}
+		assert.deepEqual(await events.get("input")({ text: "ordinary prompt", source: "rpc" }, controller.ctx), { action: "handled" });
+		assert.equal((await events.get("tool_call")({}, controller.ctx)).block, true);
+		assert.equal((await events.get("user_bash")({}, controller.ctx)).result.exitCode, 1);
+		for (const event of ["session_before_switch", "session_before_fork", "session_before_tree", "session_before_compact"]) {
+			assert.deepEqual(await events.get(event)({}, controller.ctx), { cancel: true });
+		}
+		for (const command of ["implement-run", "refine", "devflow-inbox", "devflow-init", "devflow-commit-backlog"]) {
+			await commands.get(command).handler(featureId, controller.ctx);
+			assert.match(controller.notifications.at(-1).message, /implement-run busy/);
+		}
+
+		if (phase === "implementing") {
+			const other = await workflowHarness();
+			const otherSession = commandContext(project);
+			await other.commands.get("refine").handler("Independent refinement", otherSession.ctx);
+			assert.match(other.messages.at(-1), /Refine Backlog.md draft/);
+			const humanId = createdId(await cli(project, "task", "create", "Human", "--type", "task"), "task");
+			await cli(project, "task", "edit", humanId, "--status", "Needs Human", "--assignee", "@human");
+			await other.commands.get("devflow-inbox").handler("", commandContext(project, undefined, async () => "Proceed", async (_title, options) => options[0]).ctx);
+			assert.equal(JSON.parse(await cli(project, "task", "view", humanId, "--json")).task.status, "Open");
+			assert.equal(await other.events.get("input")({}, otherSession.ctx), undefined);
+			assert.deepEqual(controller.terminalInput("\x1b"), [{ consume: true }]);
+			await waitFor(async () => recoveryReached);
+			assert.deepEqual(await events.get("input")({}, controller.ctx), { action: "handled" }, "Must stay locked while recovery is pending");
+			assert.match(controller.statuses.at(-1), /^Cancelling/);
+			recovery.resolve();
+		} else if (phase === "reviewing") {
+			await commands.get("devflow-cancel").handler("", controller.ctx);
+		} else {
+			await events.get("session_shutdown")({}, controller.ctx);
+		}
+		await running;
+		assert.equal(controller.statuses.at(-1), undefined);
+		assert.equal(controller.widgets.at(-1), undefined);
+		assert.deepEqual(controller.terminalInput("unlocked"), []);
+		assert.equal(await events.get("input")({}, controller.ctx), undefined);
+		await commands.get("devflow-status").handler("", controller.ctx);
+		assert.match(controller.notifications.at(-1).message, /No implementation controller/);
+		assert.equal(JSON.parse(await cli(project, "task", "view", leafId, "--json")).task.status, phase === "implementing" ? "Open" : phase === "reviewing" ? "In Review" : "Done");
+		assert.equal(JSON.parse(await cli(project, "task", "view", nextId, "--json")).task.status, phase === "reconciling" ? "Done" : "Open", "Cancellation must not start the next leaf");
+	}
+});
+
+test("implement-run releases its lock after picker cancellation and setup failure, and refuses an active main agent", { timeout: 15_000 }, async (t) => {
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-picker-control-"));
+	t.after(() => rm(project, { recursive: true, force: true }));
+	const { commands, events } = await workflowHarness();
+	const command = commands.get("implement-run");
+	const controller = commandContext(project);
+	controller.ctx.isIdle = () => false;
+	await command.handler("TASK-1", controller.ctx);
+	assert.match(controller.notifications.at(-1).message, /Wait for the main session/);
+	assert.deepEqual(controller.statuses, []);
+	controller.ctx.isIdle = () => true;
+	await command.handler("TASK-1", controller.ctx);
+	assert.match(controller.notifications.at(-1).message, /implement-run failed/);
+	assert.equal(controller.statuses.at(-1), undefined);
+	assert.deepEqual(controller.terminalInput("unlocked"), []);
+
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Picker cancellation", "--defaults", "--integration-mode", "none");
+	await cli(project, "task", "create", "Feature", "--type", "feature");
+	const picker = Promise.withResolvers();
+	controller.ctx.ui.select = async (_title, _options, { signal }) => {
+		assert.equal((await events.get("input")({}, controller.ctx)).action, "handled");
+		assert.deepEqual(controller.terminalInput("answer"), [undefined], "Only the workflow's prompt accepts text");
+		picker.resolve();
+		return new Promise((resolve) => signal.addEventListener("abort", () => resolve(undefined), { once: true }));
+	};
+	const running = command.handler("", controller.ctx);
+	t.after(async () => { await commands.get("devflow-cancel").handler("", controller.ctx); await running; });
+	await picker.promise;
+	assert.match(controller.statuses.at(-1), /waiting for human/);
+	assert.deepEqual(controller.terminalInput("\x03"), [{ consume: true }]);
+	await running;
+	assert.match(controller.notifications.at(-1).message, /implement-run cancelled/);
+	assert.equal(controller.statuses.at(-1), undefined);
+	assert.equal(controller.widgets.at(-1), undefined);
+	assert.equal(await events.get("input")({}, controller.ctx), undefined);
+	assert.deepEqual(controller.terminalInput("unlocked"), []);
 });
 
 test("implement-run processes every ready descendant leaf for a feature", async (t) => {
@@ -533,6 +687,17 @@ test("implement-run reconciles and requires final human approval after every des
 	assert.match(changedIndex.notifications.at(-1).message, /Git index changed after final review/);
 	assert.equal(JSON.parse(await cli(project, "task", "view", featureId, "--json")).task.status, "In Review");
 	await run("git", ["restore", "--staged", "user-staged.txt"], { cwd: project });
+	const cancelledApproval = commandContext(project, async () => {
+		assert.match(cancelledApproval.statuses.at(-1), /waiting for human/);
+		assert.deepEqual(cancelledApproval.terminalInput("\x1b"), [{ consume: true }]);
+		return true; // A late dialog answer must not override cancellation.
+	});
+	await commands.get("implement-run").handler(featureId, cancelledApproval.ctx);
+	assert.match(cancelledApproval.notifications.at(-1).message, /implement-run cancelled/);
+	assert.equal(JSON.parse(await cli(project, "task", "view", featureId, "--json")).task.status, "In Review");
+	assert.equal((await run("git", ["diff", "--cached", "--name-only"], { cwd: project })).stdout.trim(), "");
+	assert.equal(cancelledApproval.statuses.at(-1), undefined);
+	assert.deepEqual(cancelledApproval.terminalInput("unlocked"), []);
 	let approvalTitle = "";
 	let approvalReport = "";
 	const approval = commandContext(project, async (title, report) => {
