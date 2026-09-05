@@ -174,6 +174,36 @@ test("package-local Backlog.md CLI supports the workflow contract", async (t) =>
 	await cli(project, "task", "archive", childId);
 });
 
+test("session start recovers only stale devflow implementation tasks", async (t) => {
+	const project = await mkdtemp(path.join(os.tmpdir(), "devflow-recovery-"));
+	t.after(() => rm(project, { recursive: true, force: true }));
+	await run("git", ["init", "--quiet"], { cwd: project });
+	await cli(project, "init", "Recovery", "--defaults", "--integration-mode", "none");
+	const { commands, events } = await workflowHarness();
+	await commands.get("devflow-init").handler("", commandContext(project).ctx);
+	const staleId = createdId(await cli(project, "task", "create", "Stale", "--type", "task"), "task");
+	const otherId = createdId(await cli(project, "task", "create", "Other", "--type", "task"), "task");
+	await cli(project, "task", "edit", staleId, "--status", "In Progress", "--comment", "Implementation worker started.", "--comment-author", "@workflow");
+	await cli(project, "task", "edit", otherId, "--status", "In Progress");
+
+	const previousWorker = process.env.PI_DEVFLOW_WORKER;
+	await events.get("session_start")({ reason: "startup" }, { cwd: project });
+	assert.equal(JSON.parse(await cli(project, "task", "view", staleId, "--json")).task.status, "In Progress");
+	process.env.PI_DEVFLOW_WORKER = "1";
+	try { await events.get("session_start")({ reason: "reload" }, { cwd: project }); }
+	finally {
+		if (previousWorker === undefined) delete process.env.PI_DEVFLOW_WORKER;
+		else process.env.PI_DEVFLOW_WORKER = previousWorker;
+	}
+	assert.equal(JSON.parse(await cli(project, "task", "view", staleId, "--json")).task.status, "In Progress");
+	await events.get("session_start")({ reason: "reload" }, { cwd: project });
+
+	const stale = JSON.parse(await cli(project, "task", "view", staleId, "--json")).task;
+	assert.equal(stale.status, "Open");
+	assert.match(stale.comments.at(-1).body, /Recovered stale devflow implementation/);
+	assert.equal(JSON.parse(await cli(project, "task", "view", otherId, "--json")).task.status, "In Progress");
+});
+
 test("complete_transition is worker-only, validates outcomes, and terminates", async () => {
 	assert.equal((await registeredTools()).has("complete_transition"), false);
 	const tool = (await registeredTools(undefined, true)).get("complete_transition");
@@ -689,7 +719,8 @@ test("implement-run reconciles and requires final human approval after every des
 	const { commands, messages } = await workflowHarness();
 	await commands.get("devflow-init").handler("", commandContext(project).ctx);
 	const featureId = createdId(await cli(project, "task", "create", "Feature", "--type", "feature", "--priority", "Medium", "--ac", "Feature works"), "task");
-	const leafId = createdId(await cli(project, "task", "create", "Leaf", "--type", "task", "--priority", "Medium", "--parent", featureId, "--ac", "Leaf works"), "task");
+	const subFeatureId = createdId(await cli(project, "task", "create", "Sub-feature", "--type", "sub-feature", "--priority", "Medium", "--parent", featureId, "--ac", "Sub-feature works"), "task");
+	const leafId = createdId(await cli(project, "task", "create", "Leaf", "--type", "task", "--priority", "Medium", "--parent", subFeatureId, "--ac", "Leaf works"), "task");
 	await cli(project, "task", "edit", leafId, "--status", "Done", "--final-summary", "Leaf shipped", "--notes", "node --test: passed", "--modified-file", "tracked.txt", "--comment", "Verdict: approved", "--comment-author", "@reviewer");
 	await writeFile(path.join(project, "user-staged.txt"), "do not commit\n");
 	await run("git", ["add", "user-staged.txt"], { cwd: project });
@@ -697,6 +728,7 @@ test("implement-run reconciles and requires final human approval after every des
 	await commands.get("implement-run").handler(featureId, guarded.ctx);
 	assert.match(guarded.notifications.at(-1).message, /Git index already contains staged changes/);
 	assert.equal(JSON.parse(await cli(project, "task", "view", featureId, "--json")).task.status, "In Review");
+	assert.equal(JSON.parse(await cli(project, "task", "view", subFeatureId, "--json")).task.status, "Done");
 	await run("git", ["restore", "--staged", "user-staged.txt"], { cwd: project });
 	await commands.get("implement-run").handler(featureId, commandContext(project, async () => false, async () => "Why this approach?").ctx);
 	let pending = JSON.parse(await cli(project, "task", "view", featureId, "--json")).task;

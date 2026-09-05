@@ -239,6 +239,17 @@ async function runBacklog(pi: ExtensionAPI, root: string, args: string[]) {
 	return output;
 }
 
+async function recoverStartedTasks(pi: ExtensionAPI, root: string) {
+	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--status", "In Progress", "--json"])).tasks as WorkflowTaskSummary[];
+	for (const { id } of tasks) {
+		const task = JSON.parse(await runBacklog(pi, root, ["task", "view", id, "--json"])).task as WorkflowTask;
+		const lastComment = task.comments?.at(-1);
+		if (task.type === "task" && lastComment?.author === "@workflow" && /^(?:Implementation|Rework implementation) worker started/.test(lastComment.body)) {
+			await runBacklog(pi, root, ["task", "edit", task.id, "--status", "Open", "--comment", "Recovered stale devflow implementation after session reload.", "--comment-author", "@workflow"]);
+		}
+	}
+}
+
 async function commitBacklogChanges(pi: ExtensionAPI, root: string, message: string) {
 	const status = await pi.exec("git", ["status", "--porcelain=v1", "--", "backlog"], { cwd: root, timeout: 30_000 });
 	if (status.code !== 0) throw new Error(status.stderr.trim() || "Could not inspect Backlog.md changes.");
@@ -320,6 +331,15 @@ async function featureReadyForReconciliation(pi: ExtensionAPI, root: string, fea
 	return leaves.length > 0 && leaves.every((task) => task.status === "Done");
 }
 
+async function completeSubFeatures(pi: ExtensionAPI, root: string, featureId: string, tasks: WorkflowTaskSummary[]) {
+	for (const { id } of tasks.filter((task) => task.type === "sub-feature" && task.parentTaskId === featureId && task.status !== "Done")) {
+		const subFeature = JSON.parse(await runBacklog(pi, root, ["task", "view", id, "--json"])).task as WorkflowTask;
+		const args = ["task", "edit", id, "--status", "Done"];
+		for (const criterion of subFeature.acceptanceCriteria) args.push("--check-ac", String(criterion.index));
+		await runBacklog(pi, root, args);
+	}
+}
+
 function implementationEvidence(output: string, task: WorkflowTask): ImplementationEvidence {
 	let value: any;
 	try { value = JSON.parse(output); } catch { throw new Error("Worker did not return its required JSON evidence."); }
@@ -374,6 +394,8 @@ async function reconcileFeature(pi: ExtensionAPI, root: string, featureId: strin
 	}
 	if (result.outcome !== "completed") throw new Error(`Reconciliation did not complete: ${result.outcome}.`);
 	const evidence = reconciliationEvidence(result.output);
+	const tasks = JSON.parse(await runBacklog(pi, root, ["task", "list", "--json"])).tasks as WorkflowTaskSummary[];
+	await completeSubFeatures(pi, root, featureId, tasks);
 	const comment = ["## Reconciliation", evidence.summary, "## Checks", ...evidence.checks.map((check) => `- ${check.area}: ${check.evidence}`), "## Usage", JSON.stringify(result.usage)].join("\n");
 	await runBacklog(pi, root, ["task", "edit", featureId, "--status", "In Review", "--comment", comment, "--comment-author", "@reconciler"]);
 	return "completed";
@@ -722,7 +744,12 @@ export default function devflowExtension(pi: ExtensionAPI) {
 			featureCompletions = [];
 		}
 	};
-	pi.on("session_start", async (_event, ctx) => refreshFeatureCompletions(ctx.cwd));
+	pi.on("session_start", async (event, ctx) => {
+		if (event.reason === "reload" && process.env.PI_DEVFLOW_WORKER !== "1") {
+			try { await recoverStartedTasks(pi, await projectRoot(pi, ctx.cwd)); } catch { /* Backlog.md may not be initialized yet. */ }
+		}
+		await refreshFeatureCompletions(ctx.cwd);
+	});
 
 	if (process.env.PI_DEVFLOW_WORKER === "1") {
 		pi.registerTool({
