@@ -11,12 +11,12 @@ Repo operating manual for future coding agents.
 - ADR index: [`decisions/README.md`](decisions/README.md)
 - Repo overview and install notes: [`../../README.md`](../../README.md)
 - Backlog handoff extension docs: [`../../pi-extensions/backlog-handoff/README.md`](../../pi-extensions/backlog-handoff/README.md)
-- Devflow end-user guide: [`../../pi-extensions/devflow/README.md`](../../pi-extensions/devflow/README.md)
-- Devflow maintainer details: [`devflow.md`](devflow.md) — package/CLI contracts, [controller session control](devflow.md#controller-session-control), recovery limits, and verification.
+- New workflow roadmap: [`../../WORKFLOW-ROADMAP.md`](../../WORKFLOW-ROADMAP.md) — proposed manual skills, not implemented.
 - Backlog handoff example: [`../../pi-extensions/backlog-handoff/examples/generic-fullstack/README.md`](../../pi-extensions/backlog-handoff/examples/generic-fullstack/README.md)
 
 ## Rules / workflow
 - Keep root `AGENTS.md` short; put durable task docs here.
+- Devflow is retired. Its deprecated ADRs are historical, not constraints on the new skills. Do not restore controller or package-local Backlog.md requirements from those records.
 - Prioritize end-user documentation; keep maintainer-only detail in these agent docs rather than duplicating it in user-facing material.
 - `skills/` contains versioned distributable sources; global skill installation must not remove them or add local `.agents/skills/` mirrors.
 - Keep agent-facing docs under `.agents/docs/`, except root `AGENTS.md`.

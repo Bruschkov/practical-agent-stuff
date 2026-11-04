@@ -9,11 +9,13 @@ Contains reusable but loosely related:
 
 Not meant as one bulk-installable package. Pieces used selectively.
 
+## Planning
+- [New workflow roadmap](WORKFLOW-ROADMAP.md) — manually invoked refinement, implementation, and review skills; design only.
+
 ## What lives here
 - `skills/writing-agents-md/` — skill for writing/reviewing `AGENTS.md`
 - `skills/agent-docs/` — skill for initializing/maintaining `.agents/docs/` and ADR placement
 - [`pi-extensions/backlog-handoff/`](pi-extensions/backlog-handoff/README.md) — cross-project backlog handoffs
-- [`pi-extensions/devflow/`](pi-extensions/devflow/README.md) — refine, implement, review, and approve Backlog.md work
 - `pi-extensions/block-commands.ts` — block configured shell commands
 - `prompts/` — prompt templates tracked in git
 
@@ -58,13 +60,6 @@ Install any extension globally:
 pi install ./pi-extensions/backlog-handoff/index.ts
 ```
 
-### devflow
-
-```bash
-npm ci --prefix pi-extensions/devflow
-pi install ./pi-extensions/devflow
-```
-
 ### block-commands
 
 ```bash
@@ -73,9 +68,13 @@ pi install ./pi-extensions/block-commands.ts
 
 For one project only, run `pi install -l` from that project with an absolute extension path.
 
-To update installed extensions, run `git pull`, rerun `npm ci --prefix pi-extensions/devflow` if using `devflow`, then restart Pi or use `/reload`. Existing `backlog-workflow` installs must be replaced with `pi install ./pi-extensions/devflow`; remove the old entry with `pi config`.
+To update installed extensions, run `git pull`, then restart Pi or use `/reload`.
 
-See the [Devflow guide](pi-extensions/devflow/README.md) for setup and usage.
+### Retired devflow experiment
+
+Devflow (formerly `backlog-workflow`) is no longer shipped or supported. Before updating an existing installation, stop active runs and remove its package/extension entry or symlink from your user/project Pi configuration. Keep project backlog data, drafts, handoffs, branches, and PRs. Restart Pi afterward. No replacement workflow is implemented yet; see the [roadmap](WORKFLOW-ROADMAP.md).
+
+Historical source and tests are available at commit `7592e4e2240a155e7601bec4e1faa3a528065796`.
 
 
 ## Prompt workflow

@@ -1,10 +1,14 @@
 ---
-status: accepted
+status: deprecated
 date: 2026-09-03
 decision-makers: Bruschkov
 ---
 
 # Use a package-local Backlog.md CLI
+
+## Deprecation
+
+Devflow was retired as a failed experiment. This record preserves historical rationale only; its requirements and verification results do not apply to the proposed manual skills. See the [new workflow roadmap](../../../WORKFLOW-ROADMAP.md). Historical source and documentation are recoverable at commit `7592e4e2240a155e7601bec4e1faa3a528065796`.
 
 ## Context and Problem Statement
 
@@ -50,4 +54,4 @@ Non-goals: supporting Backlog.md 2.x, managing a system-wide Backlog.md installa
 
 2026-09-04: The package exposes one structured `backlog` Pi tool rather than arbitrary CLI arguments. It uses the package-local binary, caps tool output at Pi's 2,000-line/50 KB limit, and serializes writes through the project's `backlog/` directory. `typebox` is a Pi peer dependency for its parameter schema.
 
-See [Devflow Package](../devflow.md).
+Historical maintainer guide: `.agents/docs/devflow.md` at the pre-removal commit recorded above.

@@ -1,10 +1,14 @@
 ---
-status: accepted
+status: deprecated
 date: 2026-09-03
 decision-makers: Bruschkov
 ---
 
 # Adopt a Backlog.md workflow contract
+
+## Deprecation
+
+Devflow was retired as a failed experiment. This record preserves historical rationale only; its requirements and verification results do not apply to the proposed manual skills. See the [new workflow roadmap](../../../WORKFLOW-ROADMAP.md). Historical source and documentation are recoverable at commit `7592e4e2240a155e7601bec4e1faa3a528065796`.
 
 ## Context and Problem Statement
 
@@ -134,7 +138,7 @@ Revisit this contract if Backlog.md cannot represent the required configuration 
 
 2026-09-05: Controller session ownership is enforced with extension-instance state, a TUI input listener, and event/devflow-command guards in `pi-extensions/devflow/index.ts`. The guard spans selection through worker, persistence, approval, and cleanup phases; it rejects an already-active main agent and keeps separate refinement/inbox Pi instances usable. This enforces the existing session topology without introducing a worktree-wide lock or overriding Pi's native idle state. The TUI accepts cancellation/status hotkeys and controller-owned dialog input, not ordinary prompts or commands. `@earendil-works/pi-tui` is now an explicit `*` peer dependency for native key decoding rather than a custom terminal parser; the manifest and lockfile support source-local tests.
 
-2026-09-05: All worker roles and controller dialogs share one cancellation signal. Cancellation requests do not release the session guard until workers and cleanup settle; graceful shutdown aborts and awaits that settlement. Keep in-flight Backlog.md writes intact. Before a final commit starts, cancellation rejects even a late affirmative dialog answer and unstages owned paths; after commit starts, finish recording its outcome. Persist declined-approval feedback before releasing the guard, but defer the main-session discussion message until afterward so the input guard does not discard it. This does not add crash-time stale-ticket recovery. Contract tests in `tests/pi-extensions/devflow/contract.test.mjs` verify the session guards, independent sessions, worker-phase cancellation, delayed recovery, picker/setup exits, and staged-approval cancellation. See [Controller session control](../devflow.md#controller-session-control) for mechanics and current recovery limits.
+2026-09-05: All worker roles and controller dialogs share one cancellation signal. Cancellation requests do not release the session guard until workers and cleanup settle; graceful shutdown aborts and awaits that settlement. Keep in-flight Backlog.md writes intact. Before a final commit starts, cancellation rejects even a late affirmative dialog answer and unstages owned paths; after commit starts, finish recording its outcome. Persist declined-approval feedback before releasing the guard, but defer the main-session discussion message until afterward so the input guard does not discard it. This does not add crash-time stale-ticket recovery. Contract tests in `tests/pi-extensions/devflow/contract.test.mjs` verify the session guards, independent sessions, worker-phase cancellation, delayed recovery, picker/setup exits, and staged-approval cancellation. See the historical `.agents/docs/devflow.md` controller session control section at the pre-removal commit recorded above for mechanics and recovery limits.
 
 2026-09-05: `Needs Human` uses one same-session contextual dialogue in `/implement-run` and `/devflow-inbox`. It shows task, request, and persisted implementation evidence; `Add response` may be repeated and each reply is persisted. `Continue` must receive a separate confirmation before the controller records it, clears `@human`, reopens the ticket, and resumes deterministic selection. `Defer`, dismissal, or unavailable UI leaves the ticket pending. Reuse this protocol for implementation, review, and rework-cap requests; do not reopen solely because a response was entered.
 

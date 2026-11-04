@@ -7,8 +7,8 @@ ADRs for durable repo decisions.
 - Looking for accepted constraints before changing repo structure.
 
 ## Index
-- [2026-09-03 — Use a package-local Backlog.md CLI](2026-09-03-use-package-local-backlog-cli.md) — accepted.
-- [2026-09-03 — Adopt a Backlog.md workflow contract](2026-09-03-adopt-backlog-workflow-contract.md) — accepted; governs independent refinement/implementation, session-local controller ownership and cancellation, guided feature selection, leaf completion, reconciliation, and scoped commits.
+- [2026-09-03 — Use a package-local Backlog.md CLI](2026-09-03-use-package-local-backlog-cli.md) — deprecated; historical devflow CLI contract only.
+- [2026-09-03 — Adopt a Backlog.md workflow contract](2026-09-03-adopt-backlog-workflow-contract.md) — deprecated; historical devflow controller contract only. Neither record governs the proposed manual skills.
 
 ## Rules / workflow
 - Store ADRs in this directory.

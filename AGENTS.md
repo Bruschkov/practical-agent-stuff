@@ -19,5 +19,4 @@ Versioned coding-agent assets used selectively across projects.
 
 ## Docs
 - Docs map: [`.agents/docs/README.md`](.agents/docs/README.md)
-- Devflow maintainer guide: [`.agents/docs/devflow.md`](.agents/docs/devflow.md)
 - ADRs: [`.agents/docs/decisions/README.md`](.agents/docs/decisions/README.md) (ADR tools: use `.agents/docs/decisions/` as dir)
