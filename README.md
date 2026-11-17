@@ -15,6 +15,8 @@ Not meant as one bulk-installable package. Pieces used selectively.
 ## What lives here
 - `skills/writing-agents-md/` — skill for writing/reviewing `AGENTS.md`
 - `skills/agent-docs/` — skill for initializing/maintaining `.agents/docs/` and ADR placement
+- [`skills/project-init/`](skills/project-init/SKILL.md) — inspect and clarify project intent before confirmed documentation initialization through installed `agent-docs`
+- [`skills/engineering-ready/`](skills/engineering-ready/SKILL.md) — establish a minimal, stack-aware engineering foundation: tooling, hooks, CI, PR guidance and aligned docs
 - [`pi-extensions/backlog-handoff/`](pi-extensions/backlog-handoff/README.md) — cross-project backlog handoffs
 - `pi-extensions/block-commands.ts` — block configured shell commands
 - `prompts/` — prompt templates tracked in git
@@ -39,7 +41,13 @@ Install one skill:
 ```bash
 npx skills add Bruschkov/practical-agent-stuff --skill "agent-docs"
 npx skills add Bruschkov/practical-agent-stuff --skill "writing-agents-md"
+npx skills add Bruschkov/practical-agent-stuff --skill "project-init"
+npx skills add Bruschkov/practical-agent-stuff --skill "engineering-ready"
 ```
+
+For `project-init`, also install `agent-docs` using the command above. In the target project, invoke `/skill:project-init` (restart Pi or use `/reload` after installation). It inspects existing files, interviews in small rounds, and waits for confirmation before loading `agent-docs` and following its `init` workflow. Existing and greenfield projects are supported; no application scaffolding or installation is performed. Cancellation before confirmation leaves the project unchanged. If `agent-docs` is missing, it stops and explains the prerequisite.
+
+For `engineering-ready`, invoke `/skill:engineering-ready` in the target project after installation (restart Pi or use `/reload`). It inspects the stack, interviews about missing decisions, and asks for plan approval before modifying files or installing tools. It preserves existing tools and defaults, adds only approved safeguards, and verifies both passing checks and representative failures. Application scaffolding, deployment, commits/pushes and remote settings are not implicitly authorized. Installed `agent-docs` and `adr-skill` are optional integrations, not prerequisites. A [Python reference](skills/engineering-ready/references/python.md) and [verification scenarios](skills/engineering-ready/references/verification.md) accompany the stack-aware workflow. No global installation or real GitHub activation is performed by adding the skill to this repository; publish/push before using the remote install command for this new skill.
 
 After repo path changes, reinstall affected skills if old lock entries point at removed paths.
 

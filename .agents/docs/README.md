@@ -10,6 +10,7 @@ Repo operating manual for future coding agents.
 - Root entrypoint: [`../../AGENTS.md`](../../AGENTS.md)
 - ADR index: [`decisions/README.md`](decisions/README.md)
 - Repo overview and install notes: [`../../README.md`](../../README.md)
+- Engineering-readiness skill: [`../../skills/engineering-ready/SKILL.md`](../../skills/engineering-ready/SKILL.md) — stack-aware foundation; Python reference and evaluation scenarios bundled within the skill.
 - Backlog handoff extension docs: [`../../pi-extensions/backlog-handoff/README.md`](../../pi-extensions/backlog-handoff/README.md)
 - New workflow roadmap: [`../../WORKFLOW-ROADMAP.md`](../../WORKFLOW-ROADMAP.md) — proposed manual skills, not implemented.
 - Backlog handoff example: [`../../pi-extensions/backlog-handoff/examples/generic-fullstack/README.md`](../../pi-extensions/backlog-handoff/examples/generic-fullstack/README.md)
