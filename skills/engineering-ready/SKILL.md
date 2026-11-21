@@ -24,6 +24,19 @@ Summarize with file paths:
 - Existing safeguards, missing checks and contradictions.
 - Changes needed across configuration, tests, docs and callers; what must remain untouched.
 
+Include a recommended-improvements tier list in this initial scan, before the approval plan:
+
+| Tier | Work | Effort |
+| --- | --- | --- |
+| A | Highest-priority gaps: address first for this repository. | Rough hands-on range. |
+| B | Valuable improvements after A. | Rough hands-on range. |
+| C | Lower-priority or higher-cost improvements that can wait. | Rough hands-on range. |
+
+- Replace the illustrative rows with concrete, repository-specific work; omit empty tiers. If no improvements are justified, say so rather than inventing work.
+- Rank by risk reduction and practical value, considering dependencies and effort; briefly explain priorities with file evidence in the work description or surrounding summary. Do not assign fixed tiers to tools or practices regardless of context.
+- Estimate implementation and verification in minutes/hours as ranges, not promises. State material assumptions or unknowns; separate setup effort from open-ended remediation (for example, `1–2 h; findings extra`) and external waiting time.
+- Keep recommendations within the skill's boundaries. The tier list is not authorization to implement; use it to agree scope in the next step.
+
 If project intent is unclear, resolve it first; use an installed `project-init` skill if useful. Do not infer product architecture from a tooling request.
 
 ## 2. Interview and approve

@@ -34,7 +34,7 @@ Expected:
 - Inspect actual current files/settings rather than regenerate everything.
 - Propose only the necessary repair; do not add duplicate runtime files, competing tools, another workflow or an unconditional new ADR.
 - Verify the corrected command; report remote enforcement as unverified.
-- A further invocation with no gaps proposes no modifications.
+- A further invocation with no gaps proposes no modifications or invented tier-list entries.
 
 ## 4. Cancellation and unavailable integrations
 
@@ -45,6 +45,17 @@ Expected:
 - Missing optional skills do not cause silent installation or fabricated delegation; maintain existing docs directly when appropriate.
 - Missing remote access leaves actionable activation steps; do not claim a PR ran or a branch is protected.
 - A blocked install/check is reported as blocked, not replaced with a fake passing test.
+
+## 5. Initial improvement tier list
+
+Input: existing application with missing CI checks, unverified commit hooks, no behavioral tests and a proposed vulnerability scanner whose findings are unknown. User requests inspection only.
+
+Expected:
+- Initial scan includes a `Tier | Work | Effort` table before the approval plan, without requiring a separate tier-list request.
+- Concrete improvements ranked A (first), B (next), C (can wait), based on repository evidence, risk, value, dependencies and effort; empty tiers omitted.
+- Each item has a rough hands-on time range covering implementation and verification; assumptions, external waits and unknown remediation are explicit (for example, `1–2 h; findings extra`).
+- No fixed requirement that every missing test or scanner belongs to a particular tier; no application scaffolding or unrequested deployment work.
+- Recommendations do not trigger edits, installations or remote changes before approval.
 
 ## Maintainer checks
 

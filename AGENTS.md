@@ -17,6 +17,10 @@ Versioned coding-agent assets used selectively across projects.
 - Keep optional integrations non-blocking; do not add hard dependencies solely for them.
 - Prioritize end-user documentation; keep maintainer-only workflow detail in `.agents/docs/`.
 
+## Commit messages
+- Generate Conventional Commit headers: `type(scope): summary` (scope optional).
+- Use `feat` for features, `fix` for bugs, `perf` for performance, `chore` for tooling, and `docs` for documentation. Use `!` or `BREAKING CHANGE` only for actual breaking changes; these affect release versions.
+
 ## Docs
 - Docs map: [`.agents/docs/README.md`](.agents/docs/README.md)
 - ADRs: [`.agents/docs/decisions/README.md`](.agents/docs/decisions/README.md) (ADR tools: use `.agents/docs/decisions/` as dir)
