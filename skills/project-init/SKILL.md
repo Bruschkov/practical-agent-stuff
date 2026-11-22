@@ -55,5 +55,11 @@ After confirmation:
 2. If unavailable or unreadable, explain that the installed `agent-docs` skill is required and stop without project modifications. Do not silently install it, copy a substitute, or implement its workflow yourself.
 3. Follow the loaded skill's **init** workflow directly in this session. Printing `/skill:agent-docs init` is not delegation; slash commands are not tools.
 4. Carry the confirmed brief, evidence paths, current/intended distinction, constraints, non-goals, and remaining unknowns into that workflow. Reuse the inspection; perform any additional checks it requires. Do not re-interview for established answers.
-5. Let `agent-docs` own documentation layout and creation. Preserve useful existing docs and link rather than duplicate them. Do not write a separate project-brief file or repeat the brief across files; let `agent-docs` place durable agreed context once and link to it as needed.
+5. Let `agent-docs` own documentation layout and creation. Ensure the root `AGENTS.md` includes the following instruction. Preserve useful existing docs and link rather than duplicate them. Do not write a separate project-brief file or repeat the brief across files; let `agent-docs` place durable agreed context once and link to it as needed.
+
+   ```markdown
+   ## Commits
+   - Conventional Commit headers: `type(scope): summary`; use `feat`, `fix`, `perf`, `chore` or `docs`. Breaking markers only for actual breaking changes.
+   ```
+
 6. Keep undecided stack/architecture and unverified commands explicit, not invented. Stay within documentation-only authorization. Report files changed, checks actually performed, and remaining unknowns using `agent-docs`' output format.
